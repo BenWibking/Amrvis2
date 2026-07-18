@@ -64,7 +64,9 @@ amrvis2 [plotfile-directory | FAB-or-MultiFab-header]
 
 File → Open Plotfile Directory... opens an AMReX plotfile directory; File →
 Open Standalone FAB/MultiFab... opens a single FAB or MultiFab header;
-File → Open Plotfile Sequence... animates two or more plotfiles.
+File → Open Plotfile Sequence... animates two or more plotfiles. The "...in
+New Window" variants open a second, independent Amrvis2 window (its own
+dataset, cache, and view state) for side-by-side comparison.
 
 Mouse:
 

@@ -203,8 +203,11 @@ private:
         InitialSliceResult result;
     };
 
-    void chooseDataset();
+    void chooseDataset(bool newWindow = false);
     void chooseStandaloneDataset();
+    // A fresh independent top-level window (WA_DeleteOnClose) for "open in new
+    // window"; it shares no view/cache state with this one.
+    [[nodiscard]] MainWindow* createNewWindow();
     void exportImage();
     void exportSliceData();
     void createMenus();
@@ -291,7 +294,7 @@ private:
         Sweep,
         Sequence
     };
-    void choosePlotfileSequence();
+    void choosePlotfileSequence(bool newWindow = false);
     void closeSequence();
     void goToSequenceFrame(int index);
     void toggleSequencePlayback();

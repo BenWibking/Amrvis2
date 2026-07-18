@@ -868,9 +868,19 @@ void MainWindow::createMenus()
     openAction->setShortcut(QKeySequence::Open);
     connect(openAction, &QAction::triggered, this, [this] { chooseDataset(); });
 
+    auto* openNewWindowAction = new QAction(
+        tr("Open Plotfile Directory in &New Window..."), this);
+    connect(openNewWindowAction, &QAction::triggered,
+        this, [this] { chooseDataset(true); });
+
     auto* openSequenceAction = new QAction(tr("Open Plotfile &Sequence..."), this);
     connect(openSequenceAction, &QAction::triggered, this,
         [this] { choosePlotfileSequence(); });
+
+    auto* openSequenceNewWindowAction = new QAction(
+        tr("Open Plotfile Sequence in Ne&w Window..."), this);
+    connect(openSequenceNewWindowAction, &QAction::triggered,
+        this, [this] { choosePlotfileSequence(true); });
 
     auto* openStandaloneAction = new QAction(tr("Open &Standalone FAB/MultiFab..."), this);
     connect(openStandaloneAction, &QAction::triggered,
@@ -905,7 +915,9 @@ void MainWindow::createMenus()
 
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
     fileMenu->addAction(openAction);
+    fileMenu->addAction(openNewWindowAction);
     fileMenu->addAction(openSequenceAction);
+    fileMenu->addAction(openSequenceNewWindowAction);
     fileMenu->addAction(openStandaloneAction);
     fileMenu->addMenu(paletteMenu);
     fileMenu->addSeparator();
@@ -1901,13 +1913,26 @@ void MainWindow::updateWindowTitle()
         .arg(metadata.finestLevel));
 }
 
-void MainWindow::chooseDataset()
+MainWindow* MainWindow::createNewWindow()
+{
+    auto* window = new MainWindow;
+    window->setAttribute(Qt::WA_DeleteOnClose);
+    window->show();
+    return window;
+}
+
+void MainWindow::chooseDataset(bool newWindow)
 {
     const auto settings = makeSettings();
     const auto directory = QFileDialog::getExistingDirectory(
         this, tr("Open AMReX plotfile"),
         settings.value(QStringLiteral("lastOpenDirectory")).toString());
-    if (!directory.isEmpty()) {
+    if (directory.isEmpty()) {
+        return;
+    }
+    if (newWindow) {
+        createNewWindow()->openDataset(directory.toStdString());
+    } else {
         openDataset(directory.toStdString());
     }
 }
@@ -2852,7 +2877,7 @@ void MainWindow::showSlice(PlaneViewState& state, const SliceDisplayResult& disp
     statusBar()->clearMessage();
 }
 
-void MainWindow::choosePlotfileSequence()
+void MainWindow::choosePlotfileSequence(bool newWindow)
 {
     const auto settings = makeSettings();
     const auto filenames = QFileDialog::getOpenFileNames(this,
@@ -2871,7 +2896,11 @@ void MainWindow::choosePlotfileSequence()
     auto writableSettings = makeSettings();
     writableSettings.setValue(QStringLiteral("lastOpenDirectory"),
         QFileInfo(filenames.first()).absolutePath());
-    openSequence(frames);
+    if (newWindow) {
+        createNewWindow()->openSequence(frames);
+    } else {
+        openSequence(frames);
+    }
 }
 
 void MainWindow::openSequence(const std::vector<std::filesystem::path>& frames)
