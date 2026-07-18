@@ -54,6 +54,12 @@ void ColorBarWidget::setNumberFormat(QString format)
     update();
 }
 
+void ColorBarWidget::setLogarithmic(bool logarithmic)
+{
+    m_logarithmic = logarithmic;
+    update();
+}
+
 void ColorBarWidget::clearRange()
 {
     m_fieldName.clear();
@@ -99,7 +105,12 @@ void ColorBarWidget::paintEvent(QPaintEvent* event)
     for (int label = 0; label < labelCount; ++label) {
         const auto fraction = static_cast<double>(label)
             / static_cast<double>(labelCount - 1);
-        const auto value = m_maximum + fraction * (m_minimum - m_maximum);
+        // In log mode the labels must be geometrically spaced to match the
+        // gradient: the color at vertical position `fraction` (from the top)
+        // corresponds to min*(max/min)^(1-fraction).
+        const auto value = m_logarithmic
+            ? m_minimum * std::pow(m_maximum / m_minimum, 1.0 - fraction)
+            : m_maximum + fraction * (m_minimum - m_maximum);
         const auto center = bar.top()
             + static_cast<int>(std::lround(fraction * static_cast<double>(rows)));
         const auto top = std::clamp(center - labelHeight / 2, bar.top(),

@@ -182,6 +182,36 @@ std::pair<double, double> resolveRange(
     return {minimum, maximum};
 }
 
+// Like resolveRange, but if a logarithmic scale is requested and the range
+// cannot be made positive (no positive values, or a Level/File/User minimum
+// <= 0), it falls back to a linear range and reports logarithmic=false so the
+// caller renders linearly instead of failing the whole slice.
+struct ResolvedRange {
+    double minimum;
+    double maximum;
+    bool logarithmic;
+};
+
+ResolvedRange resolveDisplayRange(
+    const std::shared_ptr<PlotfileDataset>& dataset, FieldId field,
+    int maximumLevel, RangeMode rangeMode,
+    const std::optional<std::pair<double, double>>& userRange,
+    bool logarithmic, const ScalarPlane& plane)
+{
+    if (logarithmic) {
+        try {
+            const auto [minimum, maximum] = resolveRange(dataset, field,
+                maximumLevel, rangeMode, userRange, true, plane);
+            return {minimum, maximum, true};
+        } catch (const std::exception&) {
+            // Log is not viable for this range; fall back to linear below.
+        }
+    }
+    const auto [minimum, maximum] = resolveRange(dataset, field, maximumLevel,
+        rangeMode, userRange, false, plane);
+    return {minimum, maximum, false};
+}
+
 SliceDisplayResult executeSlice(const std::shared_ptr<PlotfileDataset>& dataset,
     const SliceRequest& request,
     RangeMode rangeMode,
@@ -191,18 +221,18 @@ SliceDisplayResult executeSlice(const std::shared_ptr<PlotfileDataset>& dataset,
     SliceDisplayResult result;
     result.request = request;
     result.slice = SliceQuery(*dataset).execute(request, cancellation);
-    const auto [minimum, maximum] = resolveRange(dataset, request.field,
+    const auto range = resolveDisplayRange(dataset, request.field,
         request.maximumLevel, rangeMode, userRange, logarithmic,
         result.slice.plane);
-    result.minimum = minimum;
-    result.maximum = maximum;
-    result.logarithmic = logarithmic;
+    result.minimum = range.minimum;
+    result.maximum = range.maximum;
+    result.logarithmic = range.logarithmic;
     result.fieldName = dataset->metadata().fields[request.field.value].name;
     result.image = renderScalarPlane(result.slice.plane,
         ScalarRenderSettings{
-            .minimum = minimum,
-            .maximum = maximum,
-            .logarithmic = logarithmic,
+            .minimum = range.minimum,
+            .maximum = range.maximum,
+            .logarithmic = range.logarithmic,
             .palette = &palette
         });
     return result;
@@ -369,20 +399,20 @@ SliceDisplayResult refreshCachedSlice(
     result.vectorVField = vectorVField;
     result.contourCount = contourCount;
     result.slice.plane = std::move(displayPlane);
-    const auto [minimum, maximum] = resolveRange(dataset, request.field,
+    const auto range = resolveDisplayRange(dataset, request.field,
         request.maximumLevel, rangeMode, userRange, logarithmic,
         result.slice.plane);
-    result.minimum = minimum;
-    result.maximum = maximum;
-    result.logarithmic = logarithmic;
+    result.minimum = range.minimum;
+    result.maximum = range.maximum;
+    result.logarithmic = range.logarithmic;
     result.fieldName = dataset->metadata().fields[request.field.value].name;
     result.rasterUnchanged = !rasterDirty;
     if (rasterDirty) {
         result.image = renderScalarPlane(result.slice.plane,
             ScalarRenderSettings{
-                .minimum = minimum,
-                .maximum = maximum,
-                .logarithmic = logarithmic,
+                .minimum = range.minimum,
+                .maximum = range.maximum,
+                .logarithmic = range.logarithmic,
                 .palette = &palette
             });
     }
@@ -390,7 +420,7 @@ SliceDisplayResult refreshCachedSlice(
         result.contourPlane = std::move(contourPlane);
         result.contourFinePlane = std::move(contourFinePlane);
         result.contourFineFactor = contourFineFactor;
-        const auto values = contourValues(minimum, maximum, contourCount);
+        const auto values = contourValues(range.minimum, range.maximum, contourCount);
         result.contourPolylines = contourPolylinesForDisplay(
             result.contourFinePlane, contourFineFactor, values,
             request.outputSize[0], request.outputSize[1]);
@@ -772,9 +802,14 @@ void MainWindow::setActiveView(PlaneViewState& state)
         return;
     }
     // The color scale and range boxes track the active view.
+    m_colorBar->setLogarithmic(state.displayLogarithmic);
     m_colorBar->setFieldRange(state.displayLogarithmic
         ? state.fieldName + tr(" (log)") : state.fieldName,
         state.displayMinimum, state.displayMaximum);
+    if (m_logarithmic->isChecked() != state.displayLogarithmic) {
+        const QSignalBlocker logarithmicBlocker(m_logarithmic);
+        m_logarithmic->setChecked(state.displayLogarithmic);
+    }
     if (static_cast<RangeMode>(m_rangeMode->currentData().toInt())
         != RangeMode::User) {
         const QSignalBlocker minimumBlocker(m_rangeMinimum);
@@ -2734,9 +2769,16 @@ void MainWindow::showSlice(PlaneViewState& state, const SliceDisplayResult& disp
         .arg(formatNumber(display.maximum, m_numberFormat))
         .arg(display.logarithmic ? tr(" (log)") : QString()));
     if (m_activeView == &state) {
+        m_colorBar->setLogarithmic(display.logarithmic);
         m_colorBar->setFieldRange(
             display.logarithmic ? fieldName + tr(" (log)") : fieldName,
             display.minimum, display.maximum);
+        // If log was requested but fell back to linear, reflect that in the
+        // checkbox so the user sees log did not apply.
+        if (m_logarithmic->isChecked() != display.logarithmic) {
+            const QSignalBlocker logarithmicBlocker(m_logarithmic);
+            m_logarithmic->setChecked(display.logarithmic);
+        }
         if (static_cast<RangeMode>(m_rangeMode->currentData().toInt())
             != RangeMode::User) {
             const QSignalBlocker minimumBlocker(m_rangeMinimum);
