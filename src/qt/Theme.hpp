@@ -9,7 +9,7 @@ namespace amrvis::qt {
 // here to retune every viewport at once.
 inline QColor viewportBackground()
 {
-    return {0x55, 0x55, 0x55};
+    return {0x88, 0x88, 0x88};
 }
 
 } // namespace amrvis::qt

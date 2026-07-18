@@ -243,6 +243,8 @@ private:
     [[nodiscard]] std::array<int, 2> displayAxes(int normal) const;
     void probeMoved(PlaneViewState& state, int x, int displayY);
     void probeClicked(PlaneViewState& state, int x, int displayY);
+    [[nodiscard]] QString probeReadout(
+        const PlaneViewState& state, int x, int displayY) const;
     void rubberBandZoom(PlaneViewState& state, const QRectF& sceneRect);
     void linePlotRequested(PlaneViewState& state, int imageX, int imageY,
         Qt::MouseButton button);

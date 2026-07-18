@@ -1430,57 +1430,18 @@ void MainWindow::fitViewToWindow()
     }
 }
 
-void MainWindow::probeMoved(PlaneViewState& state, int x, int displayY)
+QString MainWindow::probeReadout(
+    const PlaneViewState& state, int x, int displayY) const
 {
-    setActiveView(state);
-    const auto& plane = state.plane;
-    if (plane.width <= 0 || plane.height <= 0) {
-        return;
-    }
-    const auto y = plane.height - 1 - displayY;
-    const auto offset = static_cast<std::size_t>(x)
-        + static_cast<std::size_t>(plane.width) * static_cast<std::size_t>(y);
-    if (offset >= plane.values.size() || plane.valid[offset] == 0) {
-        m_probeLabel->setText(tr("no data"));
-        return;
-    }
-    const auto axes = displayAxes(state.normal);
-    const auto xAxis = static_cast<std::size_t>(axes[0]);
-    const auto yAxis = static_cast<std::size_t>(axes[1]);
-    const auto physicalX = plane.physicalRegion.lower[xAxis]
-        + (static_cast<double>(x) + 0.5)
-            / static_cast<double>(plane.width)
-            * (plane.physicalRegion.upper[xAxis]
-                - plane.physicalRegion.lower[xAxis]);
-    const auto physicalY = plane.physicalRegion.lower[yAxis]
-        + (static_cast<double>(y) + 0.5)
-            / static_cast<double>(plane.height)
-            * (plane.physicalRegion.upper[yAxis]
-                - plane.physicalRegion.lower[yAxis]);
-    constexpr std::array<const char*, 3> axisNames{"x", "y", "z"};
-    m_probeLabel->setText(tr("%1=%2 %3=%4 value=%5 level=%6")
-        .arg(QString::fromLatin1(axisNames[xAxis]))
-        .arg(formatNumber(physicalX, m_numberFormat))
-        .arg(QString::fromLatin1(axisNames[yAxis]))
-        .arg(formatNumber(physicalY, m_numberFormat))
-        .arg(formatNumber(static_cast<double>(plane.values[offset]),
-            m_numberFormat))
-        .arg(plane.sourceLevel[offset]));
-}
-
-void MainWindow::probeClicked(PlaneViewState& state, int x, int displayY)
-{
-    setActiveView(state);
     const auto& plane = state.plane;
     if (!m_dataset || plane.width <= 0 || plane.height <= 0) {
-        return;
+        return tr("no data");
     }
     const auto y = plane.height - 1 - displayY;
     const auto offset = static_cast<std::size_t>(x)
         + static_cast<std::size_t>(plane.width) * static_cast<std::size_t>(y);
     if (offset >= plane.values.size() || plane.valid[offset] == 0) {
-        statusBar()->showMessage(tr("no data"));
-        return;
+        return tr("no data");
     }
     const auto& metadata = m_dataset->metadata();
     const auto axes = displayAxes(state.normal);
@@ -1504,28 +1465,100 @@ void MainWindow::probeClicked(PlaneViewState& state, int x, int displayY)
     const auto level = std::clamp(
         static_cast<int>(plane.sourceLevel[offset]), 0, metadata.finestLevel);
     const auto& levelMetadata = metadata.levels[static_cast<std::size_t>(level)];
+
+    // Integer index of the cell/face/edge/node. Nodes sit on integer
+    // positions so they round; everything else floors into its cell.
+    const auto centering = (state.hasCachedRequest
+            && state.cachedRequest.field.value < metadata.fields.size())
+        ? metadata.fields[state.cachedRequest.field.value].centering
+        : amrvis::Centering::Cell;
+    const auto isNode = centering == amrvis::Centering::Node;
     std::array<int, 3> cell{0, 0, 0};
     for (int axis = 0; axis < metadata.dimension; ++axis) {
-        const auto index = static_cast<std::size_t>(axis);
-        cell[index] = static_cast<int>(std::floor(
-            (position[index] - metadata.physicalDomain.lower[index])
-                / levelMetadata.cellSize[index]));
+        const auto i = static_cast<std::size_t>(axis);
+        const auto normalized = (position[i] - metadata.physicalDomain.lower[i])
+            / levelMetadata.cellSize[i];
+        cell[i] = isNode ? static_cast<int>(std::lround(normalized))
+                         : static_cast<int>(std::floor(normalized));
     }
-    auto cellText = tr("%1,%2").arg(cell[0]).arg(cell[1]);
-    auto locationText = tr("%1,%2")
-        .arg(formatNumber(position[0], m_numberFormat))
-        .arg(formatNumber(position[1], m_numberFormat));
-    if (metadata.dimension == 3) {
-        cellText += tr(",%1").arg(cell[2]);
-        locationText += tr(",%1").arg(
-            formatNumber(position[2], m_numberFormat));
+
+    // The AMR box (grid) at this level that contains the cell.
+    int boxIndex = -1;
+    for (int box = 0; box < static_cast<int>(levelMetadata.boxes.size()); ++box) {
+        const auto& candidate = levelMetadata.boxes[static_cast<std::size_t>(box)];
+        bool contains = true;
+        for (int axis = 0; axis < metadata.dimension; ++axis) {
+            const auto i = static_cast<std::size_t>(axis);
+            if (cell[i] < candidate.lower[i] || cell[i] > candidate.upper[i]) {
+                contains = false;
+                break;
+            }
+        }
+        if (contains) {
+            boxIndex = box;
+            break;
+        }
     }
-    const auto line = tr("level=%1 cell=(%2) loc=(%3) value=%4")
-        .arg(level)
-        .arg(cellText, locationText)
+
+    auto join = [&](const auto& triple) {
+        QString text;
+        for (int axis = 0; axis < metadata.dimension; ++axis) {
+            if (axis != 0) {
+                text += ',';
+            }
+            text += QString::number(triple[static_cast<std::size_t>(axis)]);
+        }
+        return text;
+    };
+
+    constexpr std::array<const char*, 3> axisNames{"x", "y", "z"};
+    const char* indexKind = "cell";
+    if (centering == amrvis::Centering::Node) {
+        indexKind = "node";
+    } else if (centering == amrvis::Centering::FaceX
+        || centering == amrvis::Centering::FaceY
+        || centering == amrvis::Centering::FaceZ) {
+        indexKind = "face";
+    } else if (centering == amrvis::Centering::EdgeX
+        || centering == amrvis::Centering::EdgeY
+        || centering == amrvis::Centering::EdgeZ) {
+        indexKind = "edge";
+    }
+
+    QString boxText;
+    if (boxIndex >= 0) {
+        const auto& box = levelMetadata.boxes[static_cast<std::size_t>(boxIndex)];
+        boxText = tr("box #%1 (%2)-(%3)")
+            .arg(boxIndex)
+            .arg(join(box.lower), join(box.upper));
+    } else {
+        boxText = tr("box=none");
+    }
+
+    return tr("%1=%2 %3=%4 value=%5 level=%6 %7=(%8) %9")
+        .arg(QString::fromLatin1(axisNames[xAxis]))
+        .arg(formatNumber(position[xAxis], m_numberFormat))
+        .arg(QString::fromLatin1(axisNames[yAxis]))
+        .arg(formatNumber(position[yAxis], m_numberFormat))
         .arg(formatNumber(static_cast<double>(plane.values[offset]),
-            m_numberFormat));
-    statusBar()->showMessage(line);
+            m_numberFormat))
+        .arg(level)
+        .arg(QString::fromLatin1(indexKind))
+        .arg(join(cell))
+        .arg(boxText);
+}
+
+void MainWindow::probeMoved(PlaneViewState& state, int x, int displayY)
+{
+    setActiveView(state);
+    m_probeLabel->setText(probeReadout(state, x, displayY));
+}
+
+void MainWindow::probeClicked(PlaneViewState& state, int x, int displayY)
+{
+    setActiveView(state);
+    const auto line = probeReadout(state, x, displayY);
+    m_probeLabel->setText(line);
     constexpr int maximumProbeLines = 100;
     m_probeLines.append(line);
     while (m_probeLines.size() > maximumProbeLines) {
@@ -2761,13 +2794,6 @@ void MainWindow::showSlice(PlaneViewState& state, const SliceDisplayResult& disp
     state.cachedMode = display.mode;
     state.cachedVectorVField = display.vectorVField;
     state.cachedContourCount = display.contourCount;
-    state.view->setToolTip(tr("%1\nview: %2\nfield: %3\nrange: [%4, %5]%6")
-        .arg(QString::fromStdString(m_datasetPath.string()))
-        .arg(state.label)
-        .arg(fieldName)
-        .arg(formatNumber(display.minimum, m_numberFormat))
-        .arg(formatNumber(display.maximum, m_numberFormat))
-        .arg(display.logarithmic ? tr(" (log)") : QString()));
     if (m_activeView == &state) {
         m_colorBar->setLogarithmic(display.logarithmic);
         m_colorBar->setFieldRange(
@@ -2795,13 +2821,7 @@ void MainWindow::showSlice(PlaneViewState& state, const SliceDisplayResult& disp
     m_lastBlocksRead = display.slice.metrics.blocksRead;
     m_lastCacheHits = display.slice.metrics.cacheHits;
     m_lastPayloadBytesRead = display.slice.metrics.payloadBytesRead;
-    const auto tag = m_viewDimension == 3
-        ? tr(" (%1)").arg(state.label) : QString();
-    statusBar()->showMessage(tr("Displayed %1%2 at finest level; range [%3, %4]")
-        .arg(fieldName)
-        .arg(tag)
-        .arg(formatNumber(display.minimum, m_numberFormat))
-        .arg(formatNumber(display.maximum, m_numberFormat)));
+    statusBar()->clearMessage();
 }
 
 void MainWindow::choosePlotfileSequence()

@@ -39,6 +39,11 @@ Terminal=false
 Categories=Science;DataVisualization;
 EOF
 
+# gtk-update-icon-cache warns ("No theme index file") without an index.theme;
+# copy the system hicolor one into the user tree if it is missing.
+if [[ ! -f "$ICON_BASE/index.theme" && -f /usr/share/icons/hicolor/index.theme ]]; then
+    cp /usr/share/icons/hicolor/index.theme "$ICON_BASE/index.theme"
+fi
 gtk-update-icon-cache -f -t "$ICON_BASE" >/dev/null 2>&1 || true
 update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
 

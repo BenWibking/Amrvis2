@@ -84,11 +84,29 @@ void ensureDesktopEntry()
             << "Terminal=false\n"
             << "Categories=Science;DataVisualization;\n";
     }
-    // Best-effort cache refresh; missing tools or failures are harmless.
-    QProcess::startDetached("gtk-update-icon-cache",
-        QStringList{dataDir + "/icons/hicolor"});
-    QProcess::startDetached("update-desktop-database",
-        QStringList{dataDir + "/applications"});
+    // Best-effort cache refresh. gtk-update-icon-cache warns ("No theme index
+    // file") unless the theme dir has an index.theme, so copy the system
+    // hicolor one into the user tree if it is missing.
+    const QString hicolorDir = dataDir + "/icons/hicolor";
+    const QString indexTheme = hicolorDir + "/index.theme";
+    if (!QFileInfo::exists(indexTheme)) {
+        for (const QString& source : {
+                 QStringLiteral("/usr/share/icons/hicolor/index.theme"),
+                 QStringLiteral("/usr/local/share/icons/hicolor/index.theme")}) {
+            if (QFile::copy(source, indexTheme)) {
+                break;
+            }
+        }
+    }
+    // Best-effort cache refresh. Detached processes inherit the terminal, so
+    // route them through a shell that discards output (otherwise they print
+    // "Cache file created successfully." on every install). Failures harmless.
+    const auto runSilent = [](const QString& command) {
+        QProcess::startDetached("sh",
+            QStringList{"-c", command + " >/dev/null 2>&1"});
+    };
+    runSilent("gtk-update-icon-cache -f '" + hicolorDir + "'");
+    runSilent("update-desktop-database '" + dataDir + "/applications'");
 }
 
 } // namespace

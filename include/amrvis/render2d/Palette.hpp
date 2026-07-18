@@ -12,16 +12,17 @@ namespace amrvis {
 // optional 256-byte alpha ramp, so 768 or 1024 bytes total; the alpha ramp
 // is parsed but not used for 2-D rendering).
 //
-// Legacy index layout with the default reserveSystemColors = 24:
-// slots [0, 23] are reserved for system colors, slot 24 is white, 25 is
-// black, 26 is the body color, and data values map into
-// [paletteStart, paletteEnd] = [27, 255].  Unlike the legacy reader, the
-// reserved slots are kept exactly as stored in the file; data values never
-// address them.
+// Legacy index layout, matching Amrvis on a TrueColor display (Qt always
+// renders as TrueColor): reserveSystemColors = 0, slot 0 is white, 1 is black,
+// 2 is the body color, and data values map into [paletteStart, paletteEnd] =
+// [3, 255]. Legacy reserved 24 system colors only on PseudoColor displays;
+// doing that here skipped the dark-blue low slots and made the default
+// colormap's blue too light. Reserved slots are kept exactly as stored in the
+// file; data values never address them.
 class Palette {
 public:
     static constexpr int slotCount = 256;
-    static constexpr int reservedSystemColors = 24;
+    static constexpr int reservedSystemColors = 0;
     static constexpr int whiteIndex = reservedSystemColors;
     static constexpr int blackIndex = reservedSystemColors + 1;
     static constexpr int bodyIndex = reservedSystemColors + 2;
