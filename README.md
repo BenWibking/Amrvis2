@@ -59,7 +59,7 @@ VTK configuration and the bounded volume-query contract are implemented.
 Launch with an optional dataset path:
 
 ```bash
-amrvis_qt [plotfile-directory | FAB-or-MultiFab-header]
+amrvis2 [plotfile-directory | FAB-or-MultiFab-header]
 ```
 
 File → Open Plotfile Directory... opens an AMReX plotfile directory; File →
@@ -87,9 +87,9 @@ View → Number Format... sets the printf-style readout format (default
 Headless smoke hooks (used by the test suite under QT_QPA_PLATFORM=offscreen):
 
 ```bash
-amrvis_qt --smoke-test <plotfile>        # metadata only
-amrvis_qt --slice-smoke-test <plotfile>  # metadata + initial slice
-amrvis_qt --sequence-smoke-test <pltA> <pltB>
+amrvis2 --smoke-test <plotfile>        # metadata only
+amrvis2 --slice-smoke-test <plotfile>  # metadata + initial slice
+amrvis2 --sequence-smoke-test <pltA> <pltB>
 ```
 
 Preferences persist through QSettings (organization and application name

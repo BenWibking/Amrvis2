@@ -1,15 +1,118 @@
 #include "MainWindow.hpp"
 
 #include <QApplication>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QGuiApplication>
+#include <QIcon>
+#include <QProcess>
+#include <QStandardPaths>
+#include <QTextStream>
 #include <QTimer>
 
 #include <filesystem>
 #include <string_view>
 #include <vector>
 
+namespace {
+
+// "Copy and run" support for Linux docks. GNOME/KDE docks can only show an app
+// icon when a .desktop entry and a themed icon exist on this machine -- a
+// binary copied to another box has neither. So on startup we install them from
+// the bundled (qrc) icons, with Exec pointing at this running binary's path,
+// which makes the dock work wherever the executable is copied. Idempotent: it
+// only writes when the entry is missing or the binary moved. User-local
+// (~/.local/share); delete ~/.local/share/applications/amrvis2.desktop and the
+// amrvis2.png files under ~/.local/share/icons/hicolor to undo. The standalone
+// resources/install-desktop-entry.sh does the same thing by hand.
+void ensureDesktopEntry()
+{
+    static constexpr int kSizes[] = {16, 32, 64, 128, 256};
+    const QString dataDir =
+        QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    if (dataDir.isEmpty()) {
+        return;
+    }
+    const QString desktopPath = dataDir + "/applications/amrvis2.desktop";
+    const QString execPath = QCoreApplication::applicationFilePath();
+
+    const auto iconInstalled = [&]() {
+        for (int size : kSizes) {
+            const QString path = QDir(
+                dataDir + QString("/icons/hicolor/%1x%1/apps").arg(size))
+                .filePath("amrvis2.png");
+            if (!QFileInfo::exists(path)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    const auto desktopCurrent = [&]() {
+        QFile file(desktopPath);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            return false;
+        }
+        return file.readAll().contains("Exec=" + execPath.toUtf8());
+    };
+    if (iconInstalled() && desktopCurrent()) {
+        return;
+    }
+
+    for (int size : kSizes) {
+        const QString dir = dataDir + QString("/icons/hicolor/%1x%1/apps").arg(size);
+        QDir().mkpath(dir);
+        QFile in(QStringLiteral(":/amrvis2-%1.png").arg(size));
+        QFile out(QDir(dir).filePath("amrvis2.png"));
+        if (in.open(QIODevice::ReadOnly)
+            && out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            out.write(in.readAll());
+        }
+    }
+    QDir().mkpath(dataDir + "/applications");
+    QFile desktop(desktopPath);
+    if (desktop.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        QTextStream out(&desktop);
+        out << "[Desktop Entry]\n"
+            << "Type=Application\n"
+            << "Name=Amrvis2\n"
+            << "GenericName=AMR Visualization\n"
+            << "Comment=Demand-driven AMR visualization\n"
+            << "Exec=\"" << execPath << "\" %F\n"
+            << "Icon=amrvis2\n"
+            << "StartupWMClass=amrvis2\n"
+            << "Terminal=false\n"
+            << "Categories=Science;DataVisualization;\n";
+    }
+    // Best-effort cache refresh; missing tools or failures are harmless.
+    QProcess::startDetached("gtk-update-icon-cache",
+        QStringList{dataDir + "/icons/hicolor"});
+    QProcess::startDetached("update-desktop-database",
+        QStringList{dataDir + "/applications"});
+}
+
+} // namespace
+
 int main(int argc, char* argv[])
 {
     QApplication application(argc, argv);
+    // Advertise the desktop entry name and WM class as "amrvis2" so Linux
+    // docks/taskbars can match the running window to amrvis2.desktop and
+    // resolve its icon from the icon theme (setWindowIcon alone only sets the
+    // title-bar icon). QSettings keeps its own hardcoded "Amrvis2" names, so
+    // saved preferences are unaffected.
+    application.setApplicationName(QStringLiteral("amrvis2"));
+    QGuiApplication::setDesktopFileName(QStringLiteral("amrvis2"));
+    // Bundle the logo (rounded-square heatmap) at several sizes so it stays
+    // crisp from the 16 px title bar up to the 256 px taskbar/dock.
+    QIcon icon;
+    icon.addFile(QStringLiteral(":/amrvis2-16.png"));
+    icon.addFile(QStringLiteral(":/amrvis2-32.png"));
+    icon.addFile(QStringLiteral(":/amrvis2-64.png"));
+    icon.addFile(QStringLiteral(":/amrvis2-128.png"));
+    icon.addFile(QStringLiteral(":/amrvis2-256.png"));
+    application.setWindowIcon(icon);
+    ensureDesktopEntry();
     amrvis::qt::MainWindow window;
     window.show();
     if (argc == 3 && std::string_view(argv[1]) == "--smoke-test") {
