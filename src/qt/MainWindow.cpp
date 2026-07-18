@@ -61,6 +61,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <stop_token>
@@ -132,19 +133,22 @@ std::pair<double, double> finiteRange(const ScalarPlane& plane, bool positiveOnl
     return {minimum, maximum};
 }
 
-SliceDisplayResult executeSlice(const std::shared_ptr<PlotfileDataset>& dataset,
-    const SliceRequest& request,
-    RangeMode rangeMode,
+// The display range for a slice: the user's explicit range, the level/file
+// metadata range, or the finite extrema of the plane itself (positive
+// extrema for a logarithmic scale), padded so minimum < maximum always
+// holds. Shared by executeSlice and the re-render-from-cache path, which
+// must agree exactly.
+std::pair<double, double> resolveRange(
+    const std::shared_ptr<PlotfileDataset>& dataset, FieldId field,
+    int maximumLevel, RangeMode rangeMode,
     const std::optional<std::pair<double, double>>& userRange,
-    bool logarithmic, const Palette& palette, std::stop_token cancellation)
+    bool logarithmic, const ScalarPlane& plane)
 {
-    SliceDisplayResult result;
-    result.slice = SliceQuery(*dataset).execute(request, cancellation);
     auto selectedRange = userRange;
     if (rangeMode == RangeMode::Level || rangeMode == RangeMode::File) {
-        const auto statistics = metadataValueRange(dataset->metadata(), request.field,
+        const auto statistics = metadataValueRange(dataset->metadata(), field,
             rangeMode == RangeMode::Level
-                ? std::optional<int>(request.maximumLevel) : std::nullopt);
+                ? std::optional<int>(maximumLevel) : std::nullopt);
         if (!statistics) {
             throw std::runtime_error(
                 "the selected dataset does not provide this metadata range");
@@ -152,7 +156,7 @@ SliceDisplayResult executeSlice(const std::shared_ptr<PlotfileDataset>& dataset,
         selectedRange = std::pair{statistics->minimum, statistics->maximum};
     }
     auto [minimum, maximum] = selectedRange
-        ? *selectedRange : finiteRange(result.slice.plane, logarithmic);
+        ? *selectedRange : finiteRange(plane, logarithmic);
     if (minimum == maximum) {
         if (logarithmic && minimum > 0.0) {
             minimum /= 1.0 + 1.0e-6;
@@ -169,6 +173,21 @@ SliceDisplayResult executeSlice(const std::shared_ptr<PlotfileDataset>& dataset,
     if (logarithmic && !(minimum > 0.0)) {
         throw std::runtime_error("logarithmic scalar range must be positive");
     }
+    return {minimum, maximum};
+}
+
+SliceDisplayResult executeSlice(const std::shared_ptr<PlotfileDataset>& dataset,
+    const SliceRequest& request,
+    RangeMode rangeMode,
+    const std::optional<std::pair<double, double>>& userRange,
+    bool logarithmic, const Palette& palette, std::stop_token cancellation)
+{
+    SliceDisplayResult result;
+    result.request = request;
+    result.slice = SliceQuery(*dataset).execute(request, cancellation);
+    const auto [minimum, maximum] = resolveRange(dataset, request.field,
+        request.maximumLevel, rangeMode, userRange, logarithmic,
+        result.slice.plane);
     result.minimum = minimum;
     result.maximum = maximum;
     result.logarithmic = logarithmic;
@@ -197,6 +216,183 @@ void appendVectorGlyphs(const std::shared_ptr<PlotfileDataset>& dataset,
     result.slice.metrics.blocksRead += vSlice.metrics.blocksRead;
     result.slice.metrics.cacheHits += vSlice.metrics.cacheHits;
     result.slice.metrics.payloadBytesRead += vSlice.metrics.payloadBytesRead;
+}
+
+[[nodiscard]] bool isContourMode(DisplayMode mode)
+{
+    return mode == DisplayMode::RasterContours
+        || mode == DisplayMode::ColorContours || mode == DisplayMode::BWContours;
+}
+
+// The cache-key comparison for PlaneViewState: everything a cached slice
+// depends on. Range, log scale, palette, and contour count are deliberately
+// absent — those are recomputed from the cached planes on the cheap path.
+[[nodiscard]] bool sameSliceSpec(const SliceRequest& lhs, const SliceRequest& rhs)
+{
+    return lhs.dataset == rhs.dataset && lhs.field == rhs.field
+        && lhs.component == rhs.component
+        && lhs.normalDirection == rhs.normalDirection
+        && lhs.physicalPosition == rhs.physicalPosition
+        && lhs.visibleRegion == rhs.visibleRegion
+        && lhs.maximumLevel == rhs.maximumLevel
+        && lhs.outputSize == rhs.outputSize
+        && lhs.sampling == rhs.sampling
+        && lhs.composition == rhs.composition;
+}
+
+// The two in-plane axes of a slice, mirroring SliceQuery's plane axes.
+[[nodiscard]] std::array<int, 2> slicePlaneAxes(int dimension, int normalDirection)
+{
+    if (dimension == 2) {
+        return {0, 1};
+    }
+    std::array<int, 2> axes{};
+    std::size_t next = 0;
+    for (int axis = 0; axis < 3; ++axis) {
+        if (axis != normalDirection) {
+            axes[next++] = axis;
+        }
+    }
+    return axes;
+}
+
+// The number of cells of `level` covering [lower, upper] on `axis`, clipped
+// to the level's index domain: the data resolution of a slice request.
+[[nodiscard]] int coveredCells(const DatasetMetadata& metadata, int level,
+    int axis, double lower, double upper)
+{
+    const auto& levelMetadata = metadata.levels[static_cast<std::size_t>(level)];
+    const auto index = static_cast<std::size_t>(axis);
+    const auto lo = std::max(lower, metadata.physicalDomain.lower[index]);
+    const auto hi = std::min(upper, metadata.physicalDomain.upper[index]);
+    if (!(lo < hi)) {
+        return 1;
+    }
+    const auto origin = metadata.physicalDomain.lower[index];
+    const auto cellSize = levelMetadata.cellSize[index];
+    const auto domainCells = static_cast<std::int64_t>(
+        levelMetadata.domain.upper[index]) - levelMetadata.domain.lower[index];
+    const auto first = std::clamp<std::int64_t>(
+        static_cast<std::int64_t>(std::floor((lo - origin) / cellSize)),
+        0, domainCells);
+    const auto last = std::clamp<std::int64_t>(
+        static_cast<std::int64_t>(std::floor(
+            (std::nextafter(hi, lo) - origin) / cellSize)),
+        0, domainCells);
+    return static_cast<int>(last - first + 1);
+}
+
+// Contour overlays are extracted from a piecewise-constant slice at DATA
+// resolution: one sample per cell of the finest participating level covering
+// the visible region, capped at 1024 samples per axis (for coarse data this
+// plane is tiny — 4x4 on the test fixture). When the data is finer than the
+// display on both axes the display plane doubles as the contour plane,
+// because the cell-scale staircase is sub-pixel there. The contour plane is
+// then bilinearly refined so one fine cell spans at most a few display
+// pixels; marching squares on the refinement converges to the exact
+// iso-curve of the bilinear interpolant (no new extrema, no ringing), and a
+// single Chaikin pass finishes the polyline. This replaces the old second
+// SliceQuery with linear sampling at display resolution, which cost about as
+// much as the display query itself. Extraction runs here, off the GUI
+// thread, with the output mapped to display-plane pixel space; the GUI
+// thread only converts the polylines to painter paths in updateOverlay. The
+// planes and the refinement are cached in PlaneViewState, so range and
+// contour-count changes re-run only this cheap extraction (see
+// refreshCachedSlice).
+void appendContours(const std::shared_ptr<PlotfileDataset>& dataset,
+    const SliceRequest& request, int contourCount, double minimum, double maximum,
+    std::stop_token cancellation, SliceDisplayResult& result)
+{
+    const auto& metadata = dataset->metadata();
+    const auto level = std::min(request.maximumLevel, metadata.finestLevel);
+    const auto axes = slicePlaneAxes(metadata.dimension, request.normalDirection);
+    const auto xAxis = static_cast<std::size_t>(axes[0]);
+    const auto yAxis = static_cast<std::size_t>(axes[1]);
+    const auto dataWidth = coveredCells(metadata, level, axes[0],
+        request.visibleRegion.lower[xAxis], request.visibleRegion.upper[xAxis]);
+    const auto dataHeight = coveredCells(metadata, level, axes[1],
+        request.visibleRegion.lower[yAxis], request.visibleRegion.upper[yAxis]);
+    const auto displayWidth = request.outputSize[0];
+    const auto displayHeight = request.outputSize[1];
+
+    if (dataWidth >= displayWidth && dataHeight >= displayHeight) {
+        result.contourPlane = result.slice.plane;
+    } else {
+        auto contourRequest = request;
+        contourRequest.outputSize = {
+            std::min(dataWidth, 1024), std::min(dataHeight, 1024)};
+        contourRequest.sampling = SamplingPolicy::PiecewiseConstant;
+        auto contour = SliceQuery(*dataset).execute(contourRequest, cancellation);
+        result.contourPlane = std::move(contour.plane);
+        result.slice.metrics.candidateBlocks += contour.metrics.candidateBlocks;
+        result.slice.metrics.blocksRead += contour.metrics.blocksRead;
+        result.slice.metrics.cacheHits += contour.metrics.cacheHits;
+        result.slice.metrics.payloadBytesRead += contour.metrics.payloadBytesRead;
+    }
+
+    const auto factor = contourUpsampleFactor(result.contourPlane.width,
+        result.contourPlane.height, displayWidth, displayHeight);
+    result.contourFinePlane = supersamplePlane(result.contourPlane, factor);
+    result.contourFineFactor = factor;
+    const auto values = contourValues(minimum, maximum, contourCount);
+    result.contourPolylines = contourPolylinesForDisplay(
+        result.contourFinePlane, factor, values, displayWidth, displayHeight);
+}
+
+// Re-render-from-cache: only palette/log/range/contour-count cosmetics
+// changed (the request still matches the view's cache key), so the cached
+// planes are re-ranged, re-rendered, and re-contoured without any SliceQuery.
+// With rasterDirty false the raster is known unchanged and the image is not
+// re-rendered; SliceDisplayResult::rasterUnchanged tells showSlice to keep
+// the view's pixmap. Vector glyphs are reused from the cache: they do not
+// depend on palette/log/range. Runs on a worker; delivery uses the same
+// watcher and generation flow as a full slice request.
+SliceDisplayResult refreshCachedSlice(
+    const std::shared_ptr<PlotfileDataset>& dataset,
+    const SliceRequest& request, ScalarPlane displayPlane,
+    ScalarPlane contourPlane, ScalarPlane contourFinePlane, int contourFineFactor,
+    std::vector<VectorSegment> vectors,
+    RangeMode rangeMode,
+    const std::optional<std::pair<double, double>>& userRange,
+    bool logarithmic, const Palette& palette, DisplayMode displayMode,
+    std::uint32_t vectorVField, int contourCount, bool rasterDirty)
+{
+    SliceDisplayResult result;
+    result.request = request;
+    result.mode = displayMode;
+    result.vectorVField = vectorVField;
+    result.contourCount = contourCount;
+    result.slice.plane = std::move(displayPlane);
+    const auto [minimum, maximum] = resolveRange(dataset, request.field,
+        request.maximumLevel, rangeMode, userRange, logarithmic,
+        result.slice.plane);
+    result.minimum = minimum;
+    result.maximum = maximum;
+    result.logarithmic = logarithmic;
+    result.fieldName = dataset->metadata().fields[request.field.value].name;
+    result.rasterUnchanged = !rasterDirty;
+    if (rasterDirty) {
+        result.image = renderScalarPlane(result.slice.plane,
+            ScalarRenderSettings{
+                .minimum = minimum,
+                .maximum = maximum,
+                .logarithmic = logarithmic,
+                .palette = &palette
+            });
+    }
+    if (isContourMode(displayMode)) {
+        result.contourPlane = std::move(contourPlane);
+        result.contourFinePlane = std::move(contourFinePlane);
+        result.contourFineFactor = contourFineFactor;
+        const auto values = contourValues(minimum, maximum, contourCount);
+        result.contourPolylines = contourPolylinesForDisplay(
+            result.contourFinePlane, contourFineFactor, values,
+            request.outputSize[0], request.outputSize[1]);
+    }
+    if (displayMode == DisplayMode::VelocityVectors) {
+        result.vectors = std::move(vectors);
+    }
+    return result;
 }
 
 // Opens one plotfile on a worker thread and renders the slice(s) described
@@ -280,6 +476,13 @@ InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
         }
         auto display = executeSlice(result.dataset, request, spec.rangeMode,
             spec.userRange, spec.logarithmic, spec.palette, cancellation);
+        display.mode = spec.displayMode;
+        display.vectorVField = spec.vectorVField;
+        display.contourCount = spec.contourCount;
+        if (isContourMode(spec.displayMode)) {
+            appendContours(result.dataset, request, spec.contourCount,
+                display.minimum, display.maximum, cancellation, display);
+        }
         if (spec.displayMode == DisplayMode::VelocityVectors) {
             appendVectorGlyphs(result.dataset, request,
                 FieldId{std::min(spec.vectorVField, fieldCount - 1)},
@@ -875,19 +1078,26 @@ void MainWindow::applyContourSettings(
     m_vectorVField = vField;
     saveSettings();
 
-    // Contour overlays recompute from the displayed plane, but vector glyphs
-    // are baked into the slice result, so any change touching vector mode
-    // needs fresh planes; drop stale glyphs while the request is in flight.
+    // Contour polylines are re-extracted from the cached data-resolution
+    // planes on the worker, and the raster never depends on the contour
+    // mode or count, so these changes request with rasterDirty = false;
+    // requestSlice satisfies them from the cache whenever the slice spec is
+    // unchanged (entering a contour or vector mode without a matching cache
+    // still takes the full path). Vector glyphs are baked into the slice
+    // result, so a vector-mode count change re-slices. Drop stale glyphs
+    // while a vector-mode request is in flight.
     const auto involvesVectors = mode == DisplayMode::VelocityVectors
         || previousMode == DisplayMode::VelocityVectors;
     const auto inputsChanged = mode != previousMode || count != previousCount
         || uField != previousUField || vField != previousVField;
-    if (involvesVectors && inputsChanged) {
-        for (auto* state : currentViews()) {
-            state->vectorSegments.clear();
-            state->view->setOverlaySegments({});
+    if (inputsChanged) {
+        if (involvesVectors) {
+            for (auto* state : currentViews()) {
+                state->vectorSegments.clear();
+                state->view->setOverlaySegments({});
+            }
         }
-        scheduleSliceRequest();
+        scheduleSliceRequest(false);
     } else {
         updateOverlays();
     }
@@ -1030,9 +1240,11 @@ QColor MainWindow::sliceAxisColor(int axis) const
 void MainWindow::updateOverlay(PlaneViewState& state)
 {
     std::vector<OverlaySegment> overlays;
+    std::vector<OverlayPath> paths;
     const auto planeReady = state.plane.width > 1 && state.plane.height > 1;
     if (!planeReady || m_displayMode == DisplayMode::Raster) {
         state.view->setOverlaySegments(overlays);
+        state.view->setOverlayPaths(paths);
         return;
     }
 
@@ -1044,29 +1256,51 @@ void MainWindow::updateOverlay(PlaneViewState& state)
                 QColor(Qt::white), 1.0F});
         }
         state.view->setOverlaySegments(overlays);
+        state.view->setOverlayPaths(paths);
         return;
     }
 
     if (!(state.displayMinimum < state.displayMaximum)) {
         state.view->setOverlaySegments(overlays);
+        state.view->setOverlayPaths(paths);
         return;
     }
     try {
-        const auto values = contourValues(
-            state.displayMinimum, state.displayMaximum, m_contourCount);
-        const auto segments = generateContours(state.plane, values);
-        overlays.reserve(segments.size());
+        // The polylines were extracted from the refined data-resolution
+        // contour plane on the slice worker and are already in display-plane
+        // pixel space (see appendContours); this thread only converts them
+        // to painter paths. Plane row 0 is the bottom row; the displayed
+        // image is mirrored vertically, so scene y runs opposite to plane y
+        // (see showSlice).
         const auto monochrome = monochromeContourColor();
-        for (const auto& segment : segments) {
+        const auto top = static_cast<double>(state.plane.height) - 1.0;
+        std::map<double, QPainterPath> pathsByValue;
+        for (const auto& polyline : state.contourPolylines) {
+            if (polyline.points.empty()) {
+                continue;
+            }
+            auto& path = pathsByValue[polyline.value];
+            const auto& first = polyline.points.front();
+            path.moveTo(QPointF(first[0], top - first[1]));
+            for (std::size_t i = 1; i < polyline.points.size(); ++i) {
+                const auto& point = polyline.points[i];
+                path.lineTo(QPointF(point[0], top - point[1]));
+            }
+            if (polyline.closed) {
+                path.closeSubpath();
+            }
+        }
+        paths.reserve(pathsByValue.size());
+        for (auto& [value, path] : pathsByValue) {
             const auto color = m_displayMode == DisplayMode::ColorContours
-                ? contourValueColor(state, segment.value) : monochrome;
-            overlays.push_back({planeSegmentToScene(state,
-                segment.x0, segment.y0, segment.x1, segment.y1), color, 1.0F});
+                ? contourValueColor(state, value) : monochrome;
+            paths.push_back({std::move(path), color, 1.0F});
         }
     } catch (const std::exception&) {
-        overlays.clear();
+        paths.clear();
     }
     state.view->setOverlaySegments(overlays);
+    state.view->setOverlayPaths(paths);
 }
 
 void MainWindow::updateOverlays()
@@ -1772,9 +2006,18 @@ void MainWindow::openDataset(const std::filesystem::path& path, bool metadataOnl
         ++state->sliceGeneration;
         state->view->setPlaceholder(tr("Loading dataset..."));
         state->plane = {};
+        state->contourPlane = {};
+        state->contourFinePlane = {};
+        state->contourFineFactor = 1;
+        state->contourPolylines.clear();
         state->fieldName.clear();
         state->visibleRegion.reset();
         state->vectorSegments.clear();
+        state->cachedRequest = {};
+        state->hasCachedRequest = false;
+        state->cachedMode = DisplayMode::Raster;
+        state->cachedVectorVField = 0;
+        state->cachedContourCount = 0;
     }
     m_initialStopSource.request_stop();
     m_pendingAllViews = false;
@@ -1918,11 +2161,7 @@ void MainWindow::requestInitialSlice(
                             != viewGenerations[index]) {
                             continue;
                         }
-                        const auto& display = result.displays[index];
-                        showSlice(*views[index], display.image, display.slice,
-                            QString::fromStdString(display.fieldName),
-                            display.minimum, display.maximum,
-                            display.logarithmic, display.vectors);
+                        showSlice(*views[index], result.displays[index]);
                     }
                     const auto cache = m_dataset->cacheMetrics();
                     m_cacheBudgetBytes = cache.budgetBytes;
@@ -2050,23 +2289,25 @@ void MainWindow::setSlicePosition(int axis, double value)
     scheduleSliceRequest(m_planeViews[index]);
 }
 
-void MainWindow::scheduleSliceRequest()
+void MainWindow::scheduleSliceRequest(bool rasterDirty)
 {
     if (m_controlsReady && m_dataset) {
         // Any slice-affecting UI change funnels through here; a prefetched
         // frame rendered against the old spec is obsolete.
         ++m_specGeneration;
         discardPrefetch();
+        m_pendingRasterDirty = m_pendingRasterDirty || rasterDirty;
         m_pendingAllViews = true;
         m_sliceDebounce->start();
     }
 }
 
-void MainWindow::scheduleSliceRequest(PlaneViewState& state)
+void MainWindow::scheduleSliceRequest(PlaneViewState& state, bool rasterDirty)
 {
     if (m_controlsReady && m_dataset) {
         ++m_specGeneration;
         discardPrefetch();
+        m_pendingRasterDirty = m_pendingRasterDirty || rasterDirty;
         if (std::find(m_pendingViews.begin(), m_pendingViews.end(), &state)
             == m_pendingViews.end()) {
             m_pendingViews.push_back(&state);
@@ -2085,12 +2326,14 @@ void MainWindow::flushSliceRequests()
     }
     m_pendingAllViews = false;
     m_pendingViews.clear();
+    const auto rasterDirty = m_pendingRasterDirty;
+    m_pendingRasterDirty = false;
     for (auto* state : targets) {
-        requestSlice(*state);
+        requestSlice(*state, rasterDirty);
     }
 }
 
-void MainWindow::requestSlice(PlaneViewState& state)
+void MainWindow::requestSlice(PlaneViewState& state, bool rasterDirty)
 {
     if (!m_controlsReady || !m_dataset
         || m_fieldSelector->currentIndex() < 0
@@ -2131,6 +2374,20 @@ void MainWindow::requestSlice(PlaneViewState& state)
         std::max(m_vectorVField, 0));
     const auto contourCount = m_contourCount;
 
+    // Everything the cached planes depend on is unchanged (the request
+    // matches the cache key, and the mode-specific companions are cached):
+    // satisfy the request from the cached planes instead of querying again.
+    // Vector mode falls back to the full path when the glyph count changed,
+    // because glyphs are baked into the cached slice.
+    const auto fromCache = state.hasCachedRequest
+        && state.plane.width > 0
+        && sameSliceSpec(state.cachedRequest, request)
+        && state.cachedVectorVField == vectorVField
+        && (!isContourMode(displayMode) || state.contourFinePlane.width > 0)
+        && (displayMode != DisplayMode::VelocityVectors
+            || (state.cachedMode == DisplayMode::VelocityVectors
+                && contourCount == state.cachedContourCount));
+
     state.stopSource.request_stop();
     state.stopSource = std::stop_source{};
     const auto cancellation = state.stopSource.get_token();
@@ -2144,6 +2401,45 @@ void MainWindow::requestSlice(PlaneViewState& state)
         m_fieldSelector->currentText(), tag));
     updateDiagnostics();
 
+    QFuture<SliceDisplayResult> future;
+    if (fromCache) {
+        // Cheap path: re-range, re-render, and re-contour the cached planes
+        // on a worker; no SliceQuery runs at all.
+        future = QtConcurrent::run([dataset, request,
+            displayPlane = state.plane,
+            contourPlane = state.contourPlane,
+            contourFinePlane = state.contourFinePlane,
+            contourFineFactor = state.contourFineFactor,
+            vectors = state.vectorSegments,
+            rangeMode, userRange, logarithmic, palette, displayMode,
+            vectorVField, contourCount, rasterDirty]() mutable {
+            return refreshCachedSlice(dataset, request, std::move(displayPlane),
+                std::move(contourPlane), std::move(contourFinePlane),
+                contourFineFactor, std::move(vectors), rangeMode, userRange,
+                logarithmic, palette, displayMode, vectorVField, contourCount,
+                rasterDirty);
+        });
+    } else {
+        future = QtConcurrent::run(
+            [dataset, request, rangeMode, userRange, logarithmic, palette,
+                cancellation, displayMode, vectorVField, contourCount] {
+            auto result = executeSlice(dataset, request, rangeMode,
+                userRange, logarithmic, palette, cancellation);
+            result.mode = displayMode;
+            result.vectorVField = vectorVField;
+            result.contourCount = contourCount;
+            if (isContourMode(displayMode)) {
+                appendContours(dataset, request, contourCount, result.minimum,
+                    result.maximum, cancellation, result);
+            }
+            if (displayMode == DisplayMode::VelocityVectors) {
+                appendVectorGlyphs(dataset, request, FieldId{vectorVField},
+                    contourCount, cancellation, result);
+            }
+            return result;
+        });
+    }
+
     auto* watcher = new QFutureWatcher<SliceDisplayResult>(this);
     connect(watcher, &QFutureWatcher<SliceDisplayResult>::finished, this,
         [this, watcher, dataset, generation, sliceGeneration, cancellation, &state] {
@@ -2153,10 +2449,7 @@ void MainWindow::requestSlice(PlaneViewState& state)
                 auto result = watcher->result();
                 if (generation == m_generation
                     && sliceGeneration == state.sliceGeneration) {
-                    showSlice(state, result.image, result.slice,
-                        QString::fromStdString(result.fieldName),
-                        result.minimum, result.maximum, result.logarithmic,
-                        result.vectors);
+                    showSlice(state, result);
                     const auto cache = dataset->cacheMetrics();
                     m_cacheBudgetBytes = cache.budgetBytes;
                     m_cacheResidentBytes = cache.residentBytes;
@@ -2179,17 +2472,7 @@ void MainWindow::requestSlice(PlaneViewState& state)
             updateDiagnostics();
             watcher->deleteLater();
         });
-    watcher->setFuture(QtConcurrent::run(
-        [dataset, request, rangeMode, userRange, logarithmic, palette, cancellation,
-            displayMode, vectorVField, contourCount] {
-        auto result = executeSlice(dataset, request, rangeMode,
-            userRange, logarithmic, palette, cancellation);
-        if (displayMode == DisplayMode::VelocityVectors) {
-            appendVectorGlyphs(dataset, request, FieldId{vectorVField},
-                contourCount, cancellation, result);
-        }
-        return result;
-    }));
+    watcher->setFuture(future);
 }
 
 void MainWindow::updateGridBoxes(PlaneViewState& state)
@@ -2369,40 +2652,53 @@ void MainWindow::showMetadata(
         .arg(metadata.fields.size()).arg(metadata.levels.size()));
 }
 
-void MainWindow::showSlice(PlaneViewState& state, const ImageBuffer& image,
-    const SliceQueryResult& result, const QString& fieldName,
-    double minimum, double maximum, bool logarithmic,
-    const std::vector<VectorSegment>& vectors)
+void MainWindow::showSlice(PlaneViewState& state, const SliceDisplayResult& display)
 {
-    if (!image.valid()) {
-        throw std::runtime_error("renderer produced an invalid image");
+    if (!display.rasterUnchanged) {
+        if (!display.image.valid()) {
+            throw std::runtime_error("renderer produced an invalid image");
+        }
+        const QImage wrapped(
+            reinterpret_cast<const uchar*>(display.image.rgba.data()),
+            display.image.width, display.image.height, display.image.strideBytes,
+            QImage::Format_ARGB32);
+        const auto displayImage = wrapped.mirrored(false, true).copy();
+        state.view->setImage(displayImage);
     }
-    const QImage wrapped(reinterpret_cast<const uchar*>(image.rgba.data()),
-        image.width, image.height, image.strideBytes, QImage::Format_ARGB32);
-    const auto displayImage = wrapped.mirrored(false, true).copy();
-    state.view->setImage(displayImage);
-    state.plane = result.plane;
+    state.plane = display.slice.plane;
+    state.contourPlane = display.contourPlane;
+    state.contourFinePlane = display.contourFinePlane;
+    state.contourFineFactor = display.contourFineFactor;
+    state.contourPolylines = display.contourPolylines;
+    const auto fieldName = QString::fromStdString(display.fieldName);
     state.fieldName = fieldName;
-    state.displayMinimum = minimum;
-    state.displayMaximum = maximum;
-    state.displayLogarithmic = logarithmic;
-    state.vectorSegments = vectors;
+    state.displayMinimum = display.minimum;
+    state.displayMaximum = display.maximum;
+    state.displayLogarithmic = display.logarithmic;
+    state.vectorSegments = display.vectors;
+    // Cache key for the re-render-from-cache path (see requestSlice).
+    state.cachedRequest = display.request;
+    state.hasCachedRequest = true;
+    state.cachedMode = display.mode;
+    state.cachedVectorVField = display.vectorVField;
+    state.cachedContourCount = display.contourCount;
     state.view->setToolTip(tr("%1\nview: %2\nfield: %3\nrange: [%4, %5]%6")
         .arg(QString::fromStdString(m_datasetPath.string()))
         .arg(state.label)
         .arg(fieldName)
-        .arg(formatNumber(minimum, m_numberFormat))
-        .arg(formatNumber(maximum, m_numberFormat))
-        .arg(logarithmic ? tr(" (log)") : QString()));
+        .arg(formatNumber(display.minimum, m_numberFormat))
+        .arg(formatNumber(display.maximum, m_numberFormat))
+        .arg(display.logarithmic ? tr(" (log)") : QString()));
     if (m_activeView == &state) {
         m_colorBar->setFieldRange(
-            logarithmic ? fieldName + tr(" (log)") : fieldName, minimum, maximum);
+            display.logarithmic ? fieldName + tr(" (log)") : fieldName,
+            display.minimum, display.maximum);
         if (static_cast<RangeMode>(m_rangeMode->currentData().toInt())
             != RangeMode::User) {
             const QSignalBlocker minimumBlocker(m_rangeMinimum);
             const QSignalBlocker maximumBlocker(m_rangeMaximum);
-            m_rangeMinimum->setValue(minimum);
-            m_rangeMaximum->setValue(maximum);
+            m_rangeMinimum->setValue(display.minimum);
+            m_rangeMaximum->setValue(display.maximum);
         }
     }
     updateGridBoxes(state);
@@ -2410,16 +2706,16 @@ void MainWindow::showSlice(PlaneViewState& state, const ImageBuffer& image,
     // This view's region may have changed; refresh every view's guides.
     updateCrosshairs();
 
-    m_lastBlocksRead = result.metrics.blocksRead;
-    m_lastCacheHits = result.metrics.cacheHits;
-    m_lastPayloadBytesRead = result.metrics.payloadBytesRead;
+    m_lastBlocksRead = display.slice.metrics.blocksRead;
+    m_lastCacheHits = display.slice.metrics.cacheHits;
+    m_lastPayloadBytesRead = display.slice.metrics.payloadBytesRead;
     const auto tag = m_viewDimension == 3
         ? tr(" (%1)").arg(state.label) : QString();
     statusBar()->showMessage(tr("Displayed %1%2 at finest level; range [%3, %4]")
         .arg(fieldName)
         .arg(tag)
-        .arg(formatNumber(minimum, m_numberFormat))
-        .arg(formatNumber(maximum, m_numberFormat)));
+        .arg(formatNumber(display.minimum, m_numberFormat))
+        .arg(formatNumber(display.maximum, m_numberFormat)));
 }
 
 void MainWindow::choosePlotfileSequence()
@@ -2650,10 +2946,7 @@ void MainWindow::displayFrameResult(InitialSliceResult& result,
         throw std::runtime_error("frame slice count does not match the view set");
     }
     for (std::size_t index = 0; index < views.size(); ++index) {
-        const auto& display = result.displays[index];
-        showSlice(*views[index], display.image, display.slice,
-            QString::fromStdString(display.fieldName), display.minimum,
-            display.maximum, display.logarithmic, display.vectors);
+        showSlice(*views[index], result.displays[index]);
     }
     const auto cache = m_dataset->cacheMetrics();
     m_cacheBudgetBytes = cache.budgetBytes;

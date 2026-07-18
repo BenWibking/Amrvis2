@@ -1,10 +1,12 @@
 #include <amrvis/query/SliceQuery.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -15,6 +17,14 @@ namespace {
 struct LoadedBlock {
     IntBox validBox;
     PlotfileDataset::BlockCache::Handle data;
+};
+
+// The blocks of one level that intersect the planning region. Levels are
+// processed finest first so the composed per-point lookup resolves fine
+// over coarse by construction.
+struct LevelBlocks {
+    int levelIndex = 0;
+    std::vector<LoadedBlock> blocks;
 };
 
 bool intersects(const IntBox& left, const IntBox& right, int dimension)
@@ -58,16 +68,20 @@ int physicalToIndex(double position, const DatasetMetadata& metadata,
     return static_cast<int>(index);
 }
 
-IntBox requestIndexBox(const SliceRequest& request, const DatasetMetadata& metadata,
-    const LevelMetadata& level, const std::array<int, 2>& planeAxes)
+// The index box a physical region covers at one level. Piecewise sampling
+// passes the visible region; linear sampling passes a halo-expanded region
+// so the blocks of the bracketing cell centers are loaded too.
+IntBox requestIndexBox(const RealBox& region, const SliceRequest& request,
+    const DatasetMetadata& metadata, const LevelMetadata& level,
+    const std::array<int, 2>& planeAxes)
 {
     auto result = level.domain;
     for (const auto axis : planeAxes) {
         const auto i = static_cast<std::size_t>(axis);
         result.lower[i] = physicalToIndex(
-            request.visibleRegion.lower[i], metadata, level, axis);
+            region.lower[i], metadata, level, axis);
         result.upper[i] = physicalToIndex(
-            std::nextafter(request.visibleRegion.upper[i],
+            std::nextafter(region.upper[i],
                 -std::numeric_limits<double>::infinity()),
             metadata, level, axis);
     }
@@ -164,9 +178,6 @@ SliceQueryResult SliceQuery::execute(
     if (request.component != 0) {
         throw std::invalid_argument("the initial plotfile fields are scalar");
     }
-    if (request.sampling == SamplingPolicy::Linear) {
-        throw std::invalid_argument("linear slice sampling is not implemented");
-    }
 
     const auto width = static_cast<std::uint64_t>(request.outputSize[0]);
     const auto height = static_cast<std::uint64_t>(request.outputSize[1]);
@@ -188,13 +199,31 @@ SliceQueryResult SliceQuery::execute(
     const auto minimumLevel = request.composition == CompositionPolicy::ExactLevel
         ? maximumLevel : 0;
 
+    // Block planning region. Linear sampling interpolates between the cell
+    // centers bracketing each pixel, which can sit up to one covering-level
+    // cell outside the visible region, so its plan adds a one-cell halo of
+    // the coarsest participating level (the largest those cells can be).
+    // Piecewise sampling reads exactly the cells the pixel centers land in.
+    auto planningRegion = request.visibleRegion;
+    if (request.sampling == SamplingPolicy::Linear) {
+        const auto& coarsest =
+            metadata.levels[static_cast<std::size_t>(minimumLevel)];
+        for (const auto axis : axes) {
+            const auto i = static_cast<std::size_t>(axis);
+            planningRegion.lower[i] -= coarsest.cellSize[i];
+            planningRegion.upper[i] += coarsest.cellSize[i];
+        }
+    }
+
+    std::vector<LevelBlocks> levels;
     for (int levelIndex = maximumLevel; levelIndex >= minimumLevel; --levelIndex) {
         if (cancellation.stop_requested()) {
             throw ReadCancelled();
         }
         const auto& level = metadata.levels[static_cast<std::size_t>(levelIndex)];
-        const auto queryBox = requestIndexBox(request, metadata, level, axes);
-        std::vector<LoadedBlock> loaded;
+        const auto queryBox = requestIndexBox(
+            planningRegion, request, metadata, level, axes);
+        LevelBlocks levelBlocks{levelIndex, {}};
         for (std::size_t grid = 0; grid < level.blocks.size(); ++grid) {
             const auto& block = level.blocks[grid];
             if (!intersects(block.box, queryBox, metadata.dimension)) {
@@ -213,56 +242,156 @@ SliceQueryResult SliceQuery::execute(
                 ++result.metrics.blocksRead;
                 result.metrics.payloadBytesRead += access.io.bytesRead;
             }
-            loaded.push_back({block.box, std::move(access.handle)});
+            levelBlocks.blocks.push_back({block.box, std::move(access.handle)});
         }
+        levels.push_back(std::move(levelBlocks));
+    }
 
-        for (int outputY = 0; outputY < request.outputSize[1]; ++outputY) {
-            if ((outputY & 31) == 0 && cancellation.stop_requested()) {
-                throw ReadCancelled();
+    // The composed piecewise-constant field at a physical point: the finest
+    // participating level with a block covering the point's cell wins.
+    // Returns the value and the covering level, or nothing when the point
+    // is outside every grid.
+    const auto valueAt = [&metadata, &levels](const Real3& position)
+        -> std::optional<std::pair<double, int>> {
+        for (const auto& levelBlocks : levels) {
+            const auto& level =
+                metadata.levels[static_cast<std::size_t>(levelBlocks.levelIndex)];
+            Int3 point;
+            for (int axis = 0; axis < metadata.dimension; ++axis) {
+                point[static_cast<std::size_t>(axis)] = physicalToIndex(
+                    position[static_cast<std::size_t>(axis)], metadata, level, axis);
             }
-            for (int outputX = 0; outputX < request.outputSize[0]; ++outputX) {
-                const auto output = static_cast<std::size_t>(outputX)
-                    + static_cast<std::size_t>(request.outputSize[0])
-                        * static_cast<std::size_t>(outputY);
-                if (result.plane.valid[output] != 0) {
+            for (const auto& block : levelBlocks.blocks) {
+                if (!contains(block.validBox, point, metadata.dimension)) {
                     continue;
                 }
-
-                Real3 position;
-                const auto xAxis = static_cast<std::size_t>(axes[0]);
-                const auto yAxis = static_cast<std::size_t>(axes[1]);
-                position[xAxis] = request.visibleRegion.lower[xAxis]
-                    + (static_cast<double>(outputX) + 0.5)
-                        * (request.visibleRegion.upper[xAxis] - request.visibleRegion.lower[xAxis])
-                        / static_cast<double>(request.outputSize[0]);
-                position[yAxis] = request.visibleRegion.lower[yAxis]
-                    + (static_cast<double>(outputY) + 0.5)
-                        * (request.visibleRegion.upper[yAxis] - request.visibleRegion.lower[yAxis])
-                        / static_cast<double>(request.outputSize[1]);
-                if (metadata.dimension == 3) {
-                    position[static_cast<std::size_t>(request.normalDirection)] =
-                        request.physicalPosition;
+                const auto offset =
+                    valueOffset(block.data->box, point, metadata.dimension);
+                if (offset >= block.data->values.size()) {
+                    throw std::runtime_error("composed FAB index exceeds loaded block");
                 }
+                return std::pair{block.data->values[offset], levelBlocks.levelIndex};
+            }
+        }
+        return std::nullopt;
+    };
 
-                Int3 point;
-                for (int axis = 0; axis < metadata.dimension; ++axis) {
-                    point[static_cast<std::size_t>(axis)] = physicalToIndex(
-                        position[static_cast<std::size_t>(axis)], metadata, level, axis);
+    // Bilinear interpolation of the composed field at the four cell centers
+    // bracketing the position on its covering level (the data is
+    // cell-centered: the center of index cell i sits at physicalDomain.lower
+    // + (i - level.domain.lower + 1/2) * cellSize). Each corner is evaluated
+    // with the composed lookup, so samples blend fine and coarse values and
+    // stay smooth across AMR boundaries, and a globally linear field is
+    // reproduced exactly at interior pixels.
+    const auto linearSample = [&metadata, &axes, &valueAt](const Real3& position)
+        -> std::optional<std::pair<double, int>> {
+        const auto own = valueAt(position);
+        if (!own) {
+            return std::nullopt;
+        }
+        const auto coveringLevel = own->second;
+        const auto& level =
+            metadata.levels[static_cast<std::size_t>(coveringLevel)];
+
+        // Bracketing center coordinates, interpolation weight, and the
+        // bracket slot of the position's own cell, per plane axis.
+        std::array<std::array<double, 2>, 2> centers{};
+        std::array<double, 2> weights{};
+        std::array<int, 2> ownIndex{};
+        for (std::size_t planeAxis = 0; planeAxis < 2; ++planeAxis) {
+            const auto axis = static_cast<std::size_t>(axes[planeAxis]);
+            const auto cellSize = level.cellSize[axis];
+            const auto origin = metadata.physicalDomain.lower[axis];
+            const auto cell = std::floor((position[axis] - origin) / cellSize);
+            const auto cellCenter = origin + (cell + 0.5) * cellSize;
+            const auto low = position[axis] < cellCenter ? cell - 1.0 : cell;
+            centers[planeAxis][0] = origin + (low + 0.5) * cellSize;
+            centers[planeAxis][1] = centers[planeAxis][0] + cellSize;
+            weights[planeAxis] = (position[axis] - centers[planeAxis][0]) / cellSize;
+            ownIndex[planeAxis] = position[axis] < cellCenter ? 1 : 0;
+        }
+
+        // Corner samples at the bracketing centers (sharing the position's
+        // normal coordinate in 3-D). A corner outside every grid takes the
+        // nearest covered corner's value — x-aligned first, then y-aligned,
+        // then the position's own cell — clamping the field to the domain
+        // edge instead of inventing data.
+        std::array<std::array<double, 2>, 2> corner{};
+        std::array<std::array<bool, 2>, 2> covered{};
+        for (std::size_t xSide = 0; xSide < 2; ++xSide) {
+            for (std::size_t ySide = 0; ySide < 2; ++ySide) {
+                Real3 point = position;
+                point[static_cast<std::size_t>(axes[0])] = centers[0][xSide];
+                point[static_cast<std::size_t>(axes[1])] = centers[1][ySide];
+                const auto sample = valueAt(point);
+                covered[xSide][ySide] = sample.has_value();
+                corner[xSide][ySide] = sample ? sample->first : 0.0;
+            }
+        }
+        const auto ownX = static_cast<std::size_t>(ownIndex[0]);
+        const auto ownY = static_cast<std::size_t>(ownIndex[1]);
+        for (std::size_t xSide = 0; xSide < 2; ++xSide) {
+            for (std::size_t ySide = 0; ySide < 2; ++ySide) {
+                if (covered[xSide][ySide]) {
+                    continue;
                 }
-                for (const auto& block : loaded) {
-                    if (!contains(block.validBox, point, metadata.dimension)) {
-                        continue;
-                    }
-                    const auto offset = valueOffset(block.data->box, point, metadata.dimension);
-                    if (offset >= block.data->values.size()) {
-                        throw std::runtime_error("composed FAB index exceeds loaded block");
-                    }
-                    result.plane.values[output] = static_cast<float>(block.data->values[offset]);
-                    result.plane.valid[output] = 1;
-                    result.plane.sourceLevel[output] = static_cast<std::int16_t>(levelIndex);
-                    break;
+                if (covered[ownX][ySide]) {
+                    corner[xSide][ySide] = corner[ownX][ySide];
+                } else if (covered[xSide][ownY]) {
+                    corner[xSide][ySide] = corner[xSide][ownY];
+                } else if (covered[ownX][ownY]) {
+                    corner[xSide][ySide] = corner[ownX][ownY];
+                } else {
+                    corner[xSide][ySide] = own->first;
                 }
             }
+        }
+
+        const auto xWeight = weights[0];
+        const auto yWeight = weights[1];
+        const auto value = (1.0 - xWeight) * (1.0 - yWeight) * corner[0][0]
+            + xWeight * (1.0 - yWeight) * corner[1][0]
+            + (1.0 - xWeight) * yWeight * corner[0][1]
+            + xWeight * yWeight * corner[1][1];
+        return std::pair{value, coveringLevel};
+    };
+
+    const auto xAxis = static_cast<std::size_t>(axes[0]);
+    const auto yAxis = static_cast<std::size_t>(axes[1]);
+    const auto linear = request.sampling == SamplingPolicy::Linear;
+    for (int outputY = 0; outputY < request.outputSize[1]; ++outputY) {
+        if ((outputY & 31) == 0 && cancellation.stop_requested()) {
+            throw ReadCancelled();
+        }
+        for (int outputX = 0; outputX < request.outputSize[0]; ++outputX) {
+            const auto output = static_cast<std::size_t>(outputX)
+                + static_cast<std::size_t>(request.outputSize[0])
+                    * static_cast<std::size_t>(outputY);
+
+            Real3 position;
+            position[xAxis] = request.visibleRegion.lower[xAxis]
+                + (static_cast<double>(outputX) + 0.5)
+                    * (request.visibleRegion.upper[xAxis]
+                        - request.visibleRegion.lower[xAxis])
+                    / static_cast<double>(request.outputSize[0]);
+            position[yAxis] = request.visibleRegion.lower[yAxis]
+                + (static_cast<double>(outputY) + 0.5)
+                    * (request.visibleRegion.upper[yAxis]
+                        - request.visibleRegion.lower[yAxis])
+                    / static_cast<double>(request.outputSize[1]);
+            if (metadata.dimension == 3) {
+                position[static_cast<std::size_t>(request.normalDirection)] =
+                    request.physicalPosition;
+            }
+
+            const auto sample = linear ? linearSample(position) : valueAt(position);
+            if (!sample) {
+                continue;
+            }
+            result.plane.values[output] = static_cast<float>(sample->first);
+            result.plane.valid[output] = 1;
+            result.plane.sourceLevel[output] =
+                static_cast<std::int16_t>(sample->second);
         }
     }
     return result;

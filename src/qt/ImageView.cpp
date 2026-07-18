@@ -1,10 +1,12 @@
 #include "ImageView.hpp"
 
 #include <QGraphicsLineItem>
+#include <QGraphicsPathItem>
 #include <QGraphicsPixmapItem>
 #include <QGraphicsRectItem>
 #include <QGraphicsScene>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QResizeEvent>
 #include <QWheelEvent>
 #include <QPen>
@@ -23,6 +25,7 @@ ImageView::ImageView(QWidget* parent)
     setBackgroundBrush(palette().window());
     setDragMode(QGraphicsView::RubberBandDrag);
     setMouseTracking(true);
+    setRenderHint(QPainter::Antialiasing);
     setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
     setResizeAnchor(QGraphicsView::AnchorViewCenter);
 }
@@ -32,6 +35,7 @@ void ImageView::setImage(const QImage& image)
     m_scene->clear();
     m_gridItems.clear();
     m_overlayItems.clear();
+    m_pathItems.clear();
     m_crosshairVerticalItem = nullptr;
     m_crosshairHorizontalItem = nullptr;
     m_cellHighlightItem = nullptr;
@@ -85,6 +89,27 @@ void ImageView::setOverlaySegments(const std::vector<OverlaySegment>& segments)
         auto* item = m_scene->addLine(segment.line, pen);
         item->setZValue(2.0);
         m_overlayItems.push_back(item);
+    }
+}
+
+void ImageView::setOverlayPaths(const std::vector<OverlayPath>& paths)
+{
+    for (auto* item : m_pathItems) {
+        m_scene->removeItem(item);
+        delete item;
+    }
+    m_pathItems.clear();
+    if (!hasImage()) {
+        return;
+    }
+    m_pathItems.reserve(paths.size());
+    for (const auto& overlay : paths) {
+        QPen pen(overlay.color);
+        pen.setCosmetic(true);
+        pen.setWidthF(overlay.width);
+        auto* item = m_scene->addPath(overlay.path, pen);
+        item->setZValue(2.0);
+        m_pathItems.push_back(item);
     }
 }
 
@@ -157,6 +182,7 @@ void ImageView::setPlaceholder(const QString& text)
     m_scene->clear();
     m_gridItems.clear();
     m_overlayItems.clear();
+    m_pathItems.clear();
     m_crosshairVertical.reset();
     m_crosshairHorizontal.reset();
     m_crosshairVerticalItem = nullptr;

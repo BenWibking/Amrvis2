@@ -1,8 +1,16 @@
 #include <amrvis/render2d/Contours.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <iterator>
+#include <optional>
 #include <stdexcept>
+#include <unordered_map>
+#include <utility>
 
 namespace amrvis {
 
@@ -21,6 +29,98 @@ std::vector<double> contourValues(double minimum, double maximum, int count)
             minimum + (0.5 + static_cast<double>(i)) / count * span;
     }
     return values;
+}
+
+ScalarPlane supersamplePlane(const ScalarPlane& plane, int factor)
+{
+    if (factor < 1) {
+        throw std::invalid_argument("supersample factor must be at least 1");
+    }
+    if (factor == 1) {
+        return plane;
+    }
+    if (plane.width < 1 || plane.height < 1) {
+        throw std::invalid_argument("scalar plane dimensions must be positive");
+    }
+    const auto pixelCount = static_cast<std::size_t>(plane.width)
+        * static_cast<std::size_t>(plane.height);
+    if (plane.values.size() != pixelCount || plane.valid.size() != pixelCount) {
+        throw std::invalid_argument("scalar plane storage does not match its dimensions");
+    }
+
+    // Fine sample (i * factor + k, j * factor + l) sits at continuous
+    // coordinate (i + k / factor, j + l / factor), so original samples land
+    // exactly on the fine grid.
+    ScalarPlane fine;
+    fine.width = (plane.width - 1) * factor + 1;
+    fine.height = (plane.height - 1) * factor + 1;
+    fine.physicalRegion = plane.physicalRegion;
+    const auto fineCount = static_cast<std::size_t>(fine.width)
+        * static_cast<std::size_t>(fine.height);
+    fine.values.resize(fineCount);
+    fine.valid.resize(fineCount);
+    if (plane.sourceLevel.size() == pixelCount) {
+        fine.sourceLevel.resize(fineCount);
+    }
+
+    const auto width = static_cast<std::size_t>(plane.width);
+    const auto sampleAt = [&](int i, int j) {
+        return static_cast<std::size_t>(i) + static_cast<std::size_t>(j) * width;
+    };
+    const auto usable = [&](std::size_t index) {
+        return plane.valid[index] != 0 && std::isfinite(plane.values[index]);
+    };
+    // Nearest original sample to continuous coordinate (x, y), rounding
+    // halves up, clamped to the plane. Computed in integer arithmetic on the
+    // fine indices so the result is exact for every factor.
+    const auto nearest = [&](int fineIndex, int extent) {
+        const int base = fineIndex / factor;
+        const int rem = fineIndex % factor;
+        int index = base + (2 * rem >= factor ? 1 : 0);
+        return index < extent ? index : extent - 1;
+    };
+
+    for (int j = 0; j < fine.height; ++j) {
+        const int j0 = j / factor;
+        const int j1 = j0 + 1 < plane.height ? j0 + 1 : plane.height - 1;
+        const double ty = static_cast<double>(j % factor) / factor;
+        const int nj = nearest(j, plane.height);
+        for (int i = 0; i < fine.width; ++i) {
+            const int i0 = i / factor;
+            const int i1 = i0 + 1 < plane.width ? i0 + 1 : plane.width - 1;
+            const double tx = static_cast<double>(i % factor) / factor;
+            const auto fineIndex = static_cast<std::size_t>(i)
+                + static_cast<std::size_t>(j) * static_cast<std::size_t>(fine.width);
+
+            const auto bl = sampleAt(i0, j0);
+            const auto br = sampleAt(i1, j0);
+            const auto tl = sampleAt(i0, j1);
+            const auto tr = sampleAt(i1, j1);
+            if (usable(bl) && usable(br) && usable(tl) && usable(tr)) {
+                const double bottom = static_cast<double>(plane.values[bl])
+                    + tx * (static_cast<double>(plane.values[br])
+                        - static_cast<double>(plane.values[bl]));
+                const double top = static_cast<double>(plane.values[tl])
+                    + tx * (static_cast<double>(plane.values[tr])
+                        - static_cast<double>(plane.values[tl]));
+                fine.values[fineIndex] =
+                    static_cast<float>(bottom + ty * (top - bottom));
+                fine.valid[fineIndex] = 1;
+            } else {
+                // Nearest-sample fallback: preserves plateaus and keeps NaN
+                // and invalid samples from bleeding across mask boundaries.
+                const auto near = sampleAt(nearest(i, plane.width), nj);
+                fine.values[fineIndex] = std::isfinite(plane.values[near])
+                    ? plane.values[near] : 0.0F;
+                fine.valid[fineIndex] = usable(near) ? 1 : 0;
+            }
+            if (!fine.sourceLevel.empty()) {
+                const auto near = sampleAt(nearest(i, plane.width), nj);
+                fine.sourceLevel[fineIndex] = plane.sourceLevel[near];
+            }
+        }
+    }
+    return fine;
 }
 
 namespace {
@@ -106,9 +206,22 @@ void contourCell(
     };
 
     if (crossing.left && crossing.right && crossing.bottom && crossing.top) {
-        // Saddle point: connect left-right and top-bottom, mirroring legacy.
-        emit(crossing.xLeft, crossing.yLeft, crossing.xRight, crossing.yRight);
-        emit(crossing.xTop, crossing.yTop, crossing.xBottom, crossing.yBottom);
+        // Saddle cell (two diagonally opposite corners above the value):
+        // resolve with the standard asymptotic decider — compare the contour
+        // value against the mean of the corner values (the bilinear
+        // interpolant's cell-center value). When the contour value exceeds
+        // the center value the iso-lines wrap the high corners, so the
+        // left-bottom and top-right crossings pair up; otherwise they wrap
+        // the low corners and the left-top and bottom-right crossings pair
+        // up. Which diagonal is high selects between the two pairings.
+        const double center = (bl + br + tl + tr) / 4.0;
+        if ((bl > value) != (center > value)) {
+            emit(crossing.xLeft, crossing.yLeft, crossing.xBottom, crossing.yBottom);
+            emit(crossing.xTop, crossing.yTop, crossing.xRight, crossing.yRight);
+        } else {
+            emit(crossing.xLeft, crossing.yLeft, crossing.xTop, crossing.yTop);
+            emit(crossing.xBottom, crossing.yBottom, crossing.xRight, crossing.yRight);
+        }
     } else if (crossing.top && crossing.bottom) {
         emit(crossing.xTop, crossing.yTop, crossing.xBottom, crossing.yBottom);
     } else if (crossing.left) {
@@ -157,6 +270,249 @@ std::vector<ContourSegment> generateContours(
         }
     }
     return segments;
+}
+
+namespace {
+
+// Key built from the float bit patterns of a point, so endpoints match only
+// when they are bit-identical. Shared cell-edge crossings are computed from
+// the same corner pair by the same formula in both adjacent cells, so
+// matching endpoints are bit-exact; no epsilon tolerance is needed.
+std::uint64_t pointKey(float x, float y) noexcept
+{
+    std::uint32_t xBits = 0;
+    std::uint32_t yBits = 0;
+    std::memcpy(&xBits, &x, sizeof(xBits));
+    std::memcpy(&yBits, &y, sizeof(yBits));
+    return (static_cast<std::uint64_t>(xBits) << 32) | yBits;
+}
+
+struct EndpointRef {
+    std::size_t segment = 0;
+    int end = 0;  // 0 = segment start, 1 = segment end
+};
+
+std::vector<ContourPolyline> chainSegments(
+    const ContourSegment* segments, std::size_t count)
+{
+    std::unordered_multimap<std::uint64_t, EndpointRef> byEndpoint;
+    for (std::size_t i = 0; i < count; ++i) {
+        byEndpoint.emplace(
+            pointKey(segments[i].x0, segments[i].y0), EndpointRef{i, 0});
+        byEndpoint.emplace(
+            pointKey(segments[i].x1, segments[i].y1), EndpointRef{i, 1});
+    }
+    std::vector<bool> used(count, false);
+    const auto takeAt = [&](std::uint64_t key) -> std::optional<EndpointRef> {
+        const auto range = byEndpoint.equal_range(key);
+        for (auto it = range.first; it != range.second; ++it) {
+            if (!used[it->second.segment]) {
+                return it->second;
+            }
+        }
+        return std::nullopt;
+    };
+
+    std::vector<ContourPolyline> polylines;
+    for (std::size_t seed = 0; seed < count; ++seed) {
+        if (used[seed]) {
+            continue;
+        }
+        used[seed] = true;
+        ContourPolyline polyline;
+        polyline.value = segments[seed].value;
+        polyline.points.push_back({segments[seed].x0, segments[seed].y0});
+        polyline.points.push_back({segments[seed].x1, segments[seed].y1});
+        // Grow the chain in both directions, appending the far endpoint of
+        // each unused segment that touches the chain's current end.
+        for (;;) {
+            const auto& back = polyline.points.back();
+            const auto next = takeAt(pointKey(back[0], back[1]));
+            if (!next.has_value()) {
+                break;
+            }
+            used[next->segment] = true;
+            const auto& segment = segments[next->segment];
+            if (next->end == 0) {
+                polyline.points.push_back({segment.x1, segment.y1});
+            } else {
+                polyline.points.push_back({segment.x0, segment.y0});
+            }
+        }
+        for (;;) {
+            const auto& front = polyline.points.front();
+            const auto next = takeAt(pointKey(front[0], front[1]));
+            if (!next.has_value()) {
+                break;
+            }
+            used[next->segment] = true;
+            const auto& segment = segments[next->segment];
+            if (next->end == 0) {
+                polyline.points.insert(polyline.points.begin(),
+                    {segment.x1, segment.y1});
+            } else {
+                polyline.points.insert(polyline.points.begin(),
+                    {segment.x0, segment.y0});
+            }
+        }
+        // A chain that returns to its start is a closed loop; drop the
+        // duplicated closing point so the ring lists each vertex once.
+        if (polyline.points.size() > 1) {
+            const auto& first = polyline.points.front();
+            const auto& last = polyline.points.back();
+            if (pointKey(first[0], first[1]) == pointKey(last[0], last[1])) {
+                polyline.closed = true;
+                polyline.points.pop_back();
+            }
+        }
+        polylines.push_back(std::move(polyline));
+    }
+    return polylines;
+}
+
+// One Chaikin corner-cutting pass: every segment (a, b) emits the points at
+// 1/4 and 3/4 along it. Open chains keep their first and last point fixed
+// (only interior corners are cut); closed loops cut every corner, wrapping
+// around. Cuts are evaluated in double so each result rounds once.
+void chaikinPass(ContourPolyline& polyline)
+{
+    const auto& points = polyline.points;
+    if (points.size() < 2) {
+        return;
+    }
+    const auto cut = [](const std::array<float, 2>& a,
+        const std::array<float, 2>& b, double weight) {
+        return std::array<float, 2>{
+            static_cast<float>(weight * a[0] + (1.0 - weight) * b[0]),
+            static_cast<float>(weight * a[1] + (1.0 - weight) * b[1])};
+    };
+    std::vector<std::array<float, 2>> smoothed;
+    smoothed.reserve(points.size() * 2);
+    if (polyline.closed) {
+        for (std::size_t i = 0; i < points.size(); ++i) {
+            const auto& next = points[(i + 1) % points.size()];
+            smoothed.push_back(cut(points[i], next, 0.75));
+            smoothed.push_back(cut(points[i], next, 0.25));
+        }
+    } else {
+        smoothed.push_back(points.front());
+        for (std::size_t i = 0; i + 1 < points.size(); ++i) {
+            smoothed.push_back(cut(points[i], points[i + 1], 0.75));
+            smoothed.push_back(cut(points[i], points[i + 1], 0.25));
+        }
+        smoothed.push_back(points.back());
+    }
+    polyline.points = std::move(smoothed);
+}
+
+} // namespace
+
+std::vector<ContourPolyline> generateContourPolylines(
+    const ScalarPlane& plane, const std::vector<double>& values,
+    int smoothIterations, int supersampleFactor)
+{
+    if (supersampleFactor < 1) {
+        throw std::invalid_argument("supersample factor must be at least 1");
+    }
+    // With supersampling, chaining and smoothing run on the fine grid and the
+    // coordinates are scaled back at the end, so the output always uses the
+    // original plane pixel space.
+    ScalarPlane fineStorage;
+    const ScalarPlane* grid = &plane;
+    if (supersampleFactor > 1) {
+        fineStorage = supersamplePlane(plane, supersampleFactor);
+        grid = &fineStorage;
+    }
+    const auto segments = generateContours(*grid, values);
+    std::vector<ContourPolyline> polylines;
+    // generateContours emits segments grouped by value in `values` order;
+    // chain each group separately so different levels never join.
+    std::size_t begin = 0;
+    while (begin < segments.size()) {
+        std::size_t end = begin + 1;
+        while (end < segments.size()
+            && segments[end].value == segments[begin].value) {
+            ++end;
+        }
+        auto group = chainSegments(segments.data() + begin, end - begin);
+        polylines.insert(polylines.end(),
+            std::make_move_iterator(group.begin()),
+            std::make_move_iterator(group.end()));
+        begin = end;
+    }
+    for (int iteration = 0; iteration < smoothIterations; ++iteration) {
+        for (auto& polyline : polylines) {
+            chaikinPass(polyline);
+        }
+    }
+    if (supersampleFactor > 1) {
+        const auto scale = 1.0F / static_cast<float>(supersampleFactor);
+        for (auto& polyline : polylines) {
+            for (auto& point : polyline.points) {
+                point[0] *= scale;
+                point[1] *= scale;
+            }
+        }
+    }
+    return polylines;
+}
+
+int contourUpsampleFactor(
+    int contourWidth, int contourHeight, int displayWidth, int displayHeight)
+{
+    if (contourWidth < 1 || contourHeight < 1
+        || displayWidth < 1 || displayHeight < 1) {
+        return 1;
+    }
+    const auto ratio = std::max(
+        static_cast<double>(displayWidth) / static_cast<double>(contourWidth),
+        static_cast<double>(displayHeight) / static_cast<double>(contourHeight));
+    auto factor = std::clamp(static_cast<int>(std::ceil(ratio / 4.0)), 1, 16);
+    while (factor > 1
+        && (static_cast<std::int64_t>(contourWidth - 1) * factor + 1 > 1024
+            || static_cast<std::int64_t>(contourHeight - 1) * factor + 1 > 1024)) {
+        --factor;
+    }
+    return factor;
+}
+
+std::vector<ContourPolyline> contourPolylinesForDisplay(
+    const ScalarPlane& finePlane, int fineFactor,
+    const std::vector<double>& values, int displayWidth, int displayHeight)
+{
+    if (fineFactor < 1) {
+        throw std::invalid_argument("fine factor must be at least 1");
+    }
+    // The fine plane is already refined, so extraction runs without further
+    // supersampling; one Chaikin pass is enough at this density.
+    auto polylines = generateContourPolylines(finePlane, values, 1, 1);
+    if (finePlane.width < 1 || finePlane.height < 1) {
+        return polylines;
+    }
+    // Recover the original (pre-refinement) dimensions supersamplePlane
+    // produced this fine plane from, then map fine coordinates into display
+    // pixel space: fine coordinate f is original sample coordinate
+    // f / fineFactor, and original sample center j maps to display pixel
+    // ((j + 0.5) * display / original) - 0.5, cell-center to cell-center.
+    const auto originalWidth = (finePlane.width - 1) / fineFactor + 1;
+    const auto originalHeight = (finePlane.height - 1) / fineFactor + 1;
+    const auto scaleX = static_cast<double>(displayWidth)
+        / (static_cast<double>(fineFactor) * static_cast<double>(originalWidth));
+    const auto scaleY = static_cast<double>(displayHeight)
+        / (static_cast<double>(fineFactor) * static_cast<double>(originalHeight));
+    const auto offsetX = 0.5 * (static_cast<double>(displayWidth)
+        / static_cast<double>(originalWidth) - 1.0);
+    const auto offsetY = 0.5 * (static_cast<double>(displayHeight)
+        / static_cast<double>(originalHeight) - 1.0);
+    for (auto& polyline : polylines) {
+        for (auto& point : polyline.points) {
+            point[0] = static_cast<float>(
+                scaleX * static_cast<double>(point[0]) + offsetX);
+            point[1] = static_cast<float>(
+                scaleY * static_cast<double>(point[1]) + offsetY);
+        }
+    }
+    return polylines;
 }
 
 } // namespace amrvis

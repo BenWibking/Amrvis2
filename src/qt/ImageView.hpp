@@ -4,6 +4,7 @@
 #include <QColor>
 #include <QImage>
 #include <QLineF>
+#include <QPainterPath>
 #include <QPoint>
 #include <QRectF>
 
@@ -11,6 +12,7 @@
 #include <vector>
 
 class QGraphicsLineItem;
+class QGraphicsPathItem;
 class QGraphicsPixmapItem;
 class QGraphicsRectItem;
 class QMouseEvent;
@@ -30,6 +32,12 @@ struct OverlaySegment {
     float width = 1.0F;
 };
 
+struct OverlayPath {
+    QPainterPath path;
+    QColor color;
+    float width = 1.0F;
+};
+
 class ImageView final : public QGraphicsView {
     Q_OBJECT
 
@@ -39,6 +47,11 @@ public:
     void setImage(const QImage& image);
     void setGridBoxes(const std::vector<GridBoxOverlay>& boxes);
     void setOverlaySegments(const std::vector<OverlaySegment>& segments);
+    // Smooth contour polylines, rendered as cosmetic-pen path items at the
+    // same z (2) as the overlay segments. Only replaces the path items; the
+    // segment items are untouched, so callers that switch overlay kinds must
+    // also clear the other setter. setImage/setPlaceholder drop both.
+    void setOverlayPaths(const std::vector<OverlayPath>& paths);
     // Crosshair guides spanning the whole image, used by the 3-D slice views
     // to mark where the other two slice planes intersect this one. The lines
     // are in scene coordinates; a nullopt line hides that guide. They layer
@@ -88,6 +101,7 @@ private:
     QImage m_image;
     std::vector<QGraphicsRectItem*> m_gridItems;
     std::vector<QGraphicsLineItem*> m_overlayItems;
+    std::vector<QGraphicsPathItem*> m_pathItems;
     std::optional<QLineF> m_crosshairVertical;
     std::optional<QLineF> m_crosshairHorizontal;
     QColor m_crosshairVerticalColor;

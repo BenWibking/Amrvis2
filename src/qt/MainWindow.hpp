@@ -7,6 +7,7 @@
 #include <amrvis/core/Result.hpp>
 #include <amrvis/io/PlotfileMetadataReader.hpp>
 #include <amrvis/query/SliceQuery.hpp>
+#include <amrvis/render2d/Contours.hpp>
 #include <amrvis/render2d/ImageBuffer.hpp>
 #include <amrvis/render2d/Palette.hpp>
 #include <amrvis/render2d/VectorGlyphs.hpp>
@@ -66,13 +67,31 @@ enum class RangeMode {
 };
 
 struct SliceDisplayResult {
+    // The request that produced everything below; PlaneViewState keeps it as
+    // the cache key for the re-render-from-cache path (see requestSlice).
+    SliceRequest request;
     SliceQueryResult slice;
     ImageBuffer image;
     std::vector<VectorSegment> vectors;
+    // Contour modes only: the piecewise plane at data resolution the
+    // contours were extracted from (the display plane itself when the data
+    // is finer than the display), its bilinear refinement, and the
+    // polylines extracted from that refinement, already mapped to
+    // display-plane pixel space (empty otherwise).
+    ScalarPlane contourPlane;
+    ScalarPlane contourFinePlane;
+    int contourFineFactor = 1;
+    std::vector<ContourPolyline> contourPolylines;
     std::string fieldName;
     double minimum = 0.0;
     double maximum = 1.0;
     bool logarithmic = false;
+    DisplayMode mode = DisplayMode::Raster;
+    std::uint32_t vectorVField = 0;
+    int contourCount = 0;
+    // Set when the image was intentionally not re-rendered (contour-only
+    // refresh): showSlice keeps the view's current pixmap.
+    bool rasterUnchanged = false;
 };
 
 struct InitialSliceResult {
@@ -143,12 +162,30 @@ private:
         int normal = 1;
         QString label;      // "2-D" / "YZ" / "XZ" / "XY"
         ScalarPlane plane;
+        // Contour-mode companions of plane: the data-resolution plane the
+        // contours were extracted from, its bilinear refinement, and the
+        // display-space polylines. Cleared and updated exactly where plane
+        // is; together with the cache key below they let range, palette,
+        // and contour-count changes refresh without a new SliceQuery.
+        ScalarPlane contourPlane;
+        ScalarPlane contourFinePlane;
+        int contourFineFactor = 1;
+        std::vector<ContourPolyline> contourPolylines;
         QString fieldName;
         std::optional<RealBox> visibleRegion;
         double displayMinimum = 0.0;
         double displayMaximum = 1.0;
         bool displayLogarithmic = false;
         std::vector<VectorSegment> vectorSegments;
+        // Cache key of the slice that produced the planes above: a UI change
+        // that leaves every key field untouched (palette/log/range/contour
+        // count) is satisfied from the cached planes instead of querying
+        // again (see requestSlice).
+        SliceRequest cachedRequest{};
+        bool hasCachedRequest = false;
+        DisplayMode cachedMode = DisplayMode::Raster;
+        std::uint32_t cachedVectorVField = 0;
+        int cachedContourCount = 0;
         std::stop_source stopSource;
         std::uint64_t sliceGeneration = 0;
         // Slice requests currently on a worker for this view; the sweep
@@ -210,10 +247,7 @@ private:
         Qt::MouseButton button);
     void fitView(PlaneViewState& state);
     void fitViewToWindow();
-    void showSlice(PlaneViewState& state, const ImageBuffer& image,
-        const SliceQueryResult& result, const QString& fieldName,
-        double minimum, double maximum, bool logarithmic,
-        const std::vector<VectorSegment>& vectors);
+    void showSlice(PlaneViewState& state, const SliceDisplayResult& display);
     void updateOverlay(PlaneViewState& state);
     void updateOverlays();
     void updateGridBoxes(PlaneViewState& state);
@@ -232,10 +266,12 @@ private:
     void setSlicePosition(int axis, double value);
 
     // Slice requests: the debounce timer coalesces into per-view requests.
-    void scheduleSliceRequest();
-    void scheduleSliceRequest(PlaneViewState& state);
+    // rasterDirty false means the trigger (contour mode/count) cannot change
+    // the raster, so a cache-satisfied request skips the image re-render.
+    void scheduleSliceRequest(bool rasterDirty = true);
+    void scheduleSliceRequest(PlaneViewState& state, bool rasterDirty = true);
     void flushSliceRequests();
-    void requestSlice(PlaneViewState& state);
+    void requestSlice(PlaneViewState& state, bool rasterDirty);
     void requestInitialSlice(const std::filesystem::path& path, std::uint64_t generation);
     void configureSliceControls();
     void appendLinePlotCurve(const LineResult& line, const std::string& fieldName,
@@ -309,6 +345,8 @@ private:
     std::array<double, 3> m_slicePosition3d{0.0, 0.0, 0.0};
     bool m_pendingAllViews = false;
     std::vector<PlaneViewState*> m_pendingViews;
+    // OR of the rasterDirty flags of the coalesced pending requests.
+    bool m_pendingRasterDirty = false;
     std::stop_source m_initialStopSource;
     DisplayMode m_displayMode = DisplayMode::Raster;
     int m_contourCount = 10;

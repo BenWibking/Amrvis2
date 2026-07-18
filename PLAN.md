@@ -1752,6 +1752,7 @@ The agent should append entries; do not rewrite history.
 - Added README feature and usage documentation (mouse map, key bindings, CLI smoke hooks, preference storage).
 - Added the legacy Number Format dialog (printf-style readout format, default `%7.5f`, persisted) applied to the color bar, probe readouts, dataset spreadsheet, and line-plot ticks.
 - Validated the full tree: default, headless, and ASan/UBSan sanitizer presets all build warning-free with 15/15, 10/10, and 10/10 tests passing.
+- **Human-maintainer request:** smooth contour lines. Contour segments are now chained into polylines (bit-exact endpoint matching) and smoothed with two Chaikin corner-cutting passes (open contours keep their endpoints; closed loops stay closed), drawn as antialiased paths. This is a documented visual enhancement beyond legacy behavior, which draws raw marching-squares segments.
 
 ### 2026-07-16
 
