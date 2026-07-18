@@ -1569,9 +1569,25 @@ QString MainWindow::probeReadout(
     QString boxText;
     if (boxIndex >= 0) {
         const auto& box = levelMetadata.boxes[static_cast<std::size_t>(boxIndex)];
-        boxText = tr("box #%1 (%2)-(%3)")
-            .arg(boxIndex)
-            .arg(join(box.lower), join(box.upper));
+        // Axis-major: ((xlo,xhi),(ylo,yhi),...,(index-type per axis)). The
+        // trailing list is the box's AMReX IndexType (0 = cell, 1 = node).
+        QString bounds;
+        for (int axis = 0; axis < metadata.dimension; ++axis) {
+            const auto i = static_cast<std::size_t>(axis);
+            if (axis != 0) {
+                bounds += ',';
+            }
+            bounds += QStringLiteral("(%1,%2)").arg(box.lower[i]).arg(box.upper[i]);
+        }
+        QString indexType;
+        for (int axis = 0; axis < metadata.dimension; ++axis) {
+            const auto i = static_cast<std::size_t>(axis);
+            if (axis != 0) {
+                indexType += ',';
+            }
+            indexType += QString::number(box.centering[i]);
+        }
+        boxText = tr("box #%1 (%2,(%3))").arg(boxIndex).arg(bounds, indexType);
     } else {
         boxText = tr("box=none");
     }
