@@ -56,6 +56,11 @@ ImageView::ImageView(QWidget* parent)
 
 void ImageView::setImage(const QImage& image)
 {
+    // Refit only when the image changes size (initial open, a zoom into a new
+    // region, a differently-sized dataset). When only the colors are remapped
+    // at the same size -- toggling Log, or changing field, level, or range --
+    // keep the user's current zoom/pan.
+    const bool refit = m_image.isNull() || m_image.size() != image.size();
     m_scene->clear();
     m_gridItems.clear();
     m_overlayItems.clear();
@@ -69,8 +74,10 @@ void ImageView::setImage(const QImage& image)
     m_item = m_scene->addPixmap(QPixmap::fromImage(m_image));
     m_scene->setSceneRect(m_item->boundingRect());
     setBackgroundBrush(viewportBackground());
-    m_fitOnResize = true;
-    fitImage();
+    if (refit) {
+        m_fitOnResize = true;
+        fitImage();
+    }
     applyCrosshairs();
 }
 
