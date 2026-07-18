@@ -648,30 +648,35 @@ MainWindow::MainWindow(QWidget* parent)
     m_logarithmic->setEnabled(false);
     m_gridBoxes->setEnabled(false);
 
-    auto* metadataDock = new QDockWidget(tr("Dataset Metadata"), this);
-    m_metadataTree = new QTreeWidget(metadataDock);
+    m_metadataDock = new QDockWidget(tr("Dataset Metadata"), this);
+    m_metadataTree = new QTreeWidget(m_metadataDock);
     m_metadataTree->setColumnCount(2);
     m_metadataTree->setHeaderLabels({tr("Property"), tr("Value")});
     m_metadataTree->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_metadataTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-    metadataDock->setWidget(m_metadataTree);
-    addDockWidget(Qt::LeftDockWidgetArea, metadataDock);
+    m_metadataDock->setWidget(m_metadataTree);
+    addDockWidget(Qt::LeftDockWidgetArea, m_metadataDock);
+    m_metadataDock->setVisible(false);
 
-    auto* diagnosticsDock = new QDockWidget(tr("Diagnostics"), this);
-    m_diagnostics = new QPlainTextEdit(diagnosticsDock);
+    m_diagnosticsDock = new QDockWidget(tr("Diagnostics"), this);
+    m_diagnostics = new QPlainTextEdit(m_diagnosticsDock);
     m_diagnostics->setReadOnly(true);
-    diagnosticsDock->setWidget(m_diagnostics);
-    addDockWidget(Qt::BottomDockWidgetArea, diagnosticsDock);
+    m_diagnosticsDock->setWidget(m_diagnostics);
+    addDockWidget(Qt::BottomDockWidgetArea, m_diagnosticsDock);
+    m_diagnosticsDock->setVisible(false);
 
-    auto* colorBarDock = new QDockWidget(tr("Color Scale"), this);
-    m_colorBar = new ColorBarWidget(colorBarDock);
-    colorBarDock->setWidget(m_colorBar);
-    addDockWidget(Qt::RightDockWidgetArea, colorBarDock);
+    m_colorBarDock = new QDockWidget(tr("Color Scale"), this);
+    m_colorBar = new ColorBarWidget(m_colorBarDock);
+    m_colorBarDock->setWidget(m_colorBar);
+    addDockWidget(Qt::RightDockWidgetArea, m_colorBarDock);
 
-    auto* animationDock = new QDockWidget(tr("Animation"), this);
-    m_animationPanel = new AnimationPanel(animationDock);
-    animationDock->setWidget(m_animationPanel);
-    addDockWidget(Qt::RightDockWidgetArea, animationDock);
+    m_animationDock = new QDockWidget(tr("Animation"), this);
+    m_animationPanel = new AnimationPanel(m_animationDock);
+    m_animationDock->setWidget(m_animationPanel);
+    addDockWidget(Qt::RightDockWidgetArea, m_animationDock);
+    // Shown only for 3-D datasets (slice sweep) or plotfile sequences; hidden
+    // until updateAnimationDockVisibility() decides otherwise.
+    m_animationDock->setVisible(false);
 
     // One playback timer drives either animation mode; starting one mode
     // stops the other (see setPlaybackMode).
@@ -903,6 +908,14 @@ void MainWindow::createMenus()
     viewMenu->addAction(m_contoursAction);
     viewMenu->addAction(m_datasetAction);
     viewMenu->addAction(numberFormatAction);
+    viewMenu->addSeparator();
+    // Panel visibility toggles. Color Scale is visible by default; Dataset
+    // Metadata and Diagnostics start hidden, and Animation is auto-shown for
+    // 3-D datasets and plotfile sequences.
+    viewMenu->addAction(m_metadataDock->toggleViewAction());
+    viewMenu->addAction(m_colorBarDock->toggleViewAction());
+    viewMenu->addAction(m_diagnosticsDock->toggleViewAction());
+    viewMenu->addAction(m_animationDock->toggleViewAction());
 
     m_variableMenu = menuBar()->addMenu(tr("&Variable"));
     m_variableGroup = new QActionGroup(this);
@@ -2256,6 +2269,7 @@ void MainWindow::configureSliceControls()
     const auto isThreeDimensional = metadata.dimension == 3;
     m_stack->setCurrentIndex(isThreeDimensional ? 1 : 0);
     m_animationPanel->setSweepVisible(isThreeDimensional);
+    updateAnimationDockVisibility();
     configureSlicePositionControls();
     if (isThreeDimensional) {
         m_isoWidget->setGeometry(metadata);
@@ -2787,6 +2801,7 @@ void MainWindow::openSequence(const std::vector<std::filesystem::path>& frames)
     m_animationPanel->setSequenceFrameCount(
         static_cast<int>(m_sequenceFrames.size()));
     m_animationPanel->setSequenceVisible(true);
+    updateAnimationDockVisibility();
     // Line plot curves are snapshots of the previous dataset; drop the window.
     auto* linePlotWindow = m_linePlotWindow;
     m_linePlotWindow = nullptr;
@@ -2806,6 +2821,18 @@ void MainWindow::closeSequence()
     m_sequenceIndex = -1;
     m_sequenceInFlight = false;
     m_animationPanel->setSequenceVisible(false);
+    updateAnimationDockVisibility();
+}
+
+void MainWindow::updateAnimationDockVisibility()
+{
+    // The Animation panel hosts the 3-D slice-sweep controls and the
+    // plotfile-sequence controls. Keep it visible only when one of those
+    // applies; otherwise it is dead space.
+    const auto sequenceActive = !m_sequenceFrames.empty();
+    const auto threeD = m_dataset != nullptr
+        && m_dataset->metadata().dimension == 3;
+    m_animationDock->setVisible(sequenceActive || threeD);
 }
 
 void MainWindow::stepSequence(int direction)
@@ -3027,6 +3054,7 @@ void MainWindow::configureSequenceControls(bool defaultPositions)
     }
     m_stack->setCurrentIndex(isThreeDimensional ? 1 : 0);
     m_animationPanel->setSweepVisible(isThreeDimensional);
+    updateAnimationDockVisibility();
     configureSlicePositionControls();
 
     // The active view must belong to the new dimension's view set.

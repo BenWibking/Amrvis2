@@ -32,6 +32,7 @@ class QCheckBox;
 class QCloseEvent;
 class QColor;
 class QComboBox;
+class QDockWidget;
 class QDoubleSpinBox;
 class QLabel;
 class QLineF;
@@ -229,6 +230,7 @@ private:
     void showInfoDialog();
     void showMetadata(const PlotfileMetadataResult& result, const std::filesystem::path& path);
     void updateDiagnostics();
+    void updateAnimationDockVisibility();
     void updateWindowTitle();
     void restoreSettings();
     void saveSettings();
@@ -328,6 +330,10 @@ private:
     QTimer* m_sliceDebounce = nullptr;
     QTreeWidget* m_metadataTree = nullptr;
     QPlainTextEdit* m_diagnostics = nullptr;
+    QDockWidget* m_metadataDock = nullptr;
+    QDockWidget* m_diagnosticsDock = nullptr;
+    QDockWidget* m_colorBarDock = nullptr;
+    QDockWidget* m_animationDock = nullptr;
     QMenu* m_variableMenu = nullptr;
     QMenu* m_levelMenu = nullptr;
     QActionGroup* m_variableGroup = nullptr;
