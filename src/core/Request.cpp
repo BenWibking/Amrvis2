@@ -54,5 +54,27 @@ std::vector<std::string> validateSliceRequest(
     return errors;
 }
 
+std::vector<std::string> validateLineRequest(
+    const LineRequest& request, int datasetDimension)
+{
+    std::vector<std::string> errors;
+    if (request.dataset.value == 0) {
+        errors.emplace_back("dataset id must be nonzero");
+    }
+    if (datasetDimension < 2 || datasetDimension > 3) {
+        errors.emplace_back("line requests require a 2-D or 3-D dataset");
+    }
+    if (request.axis < 0 || request.axis >= datasetDimension) {
+        errors.emplace_back("line axis is outside the dataset dimension");
+    }
+    if (request.component < 0) {
+        errors.emplace_back("component must be non-negative");
+    }
+    if (request.maximumLevel < 0) {
+        errors.emplace_back("maximum level must be non-negative");
+    }
+    return errors;
+}
+
 } // namespace amrvis
 

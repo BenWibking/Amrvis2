@@ -41,3 +41,61 @@ See [docs/building.md](docs/building.md) for the current compiler matrix.
 
 The optional VTK module is deliberately unavailable until a Qt 6-compatible
 VTK configuration and the bounded volume-query contract are implemented.
+
+## Features
+
+- Open AMReX plotfile directories (2-D and 3-D) and standalone FAB/MultiFab
+  headers
+- Field and AMR level selection (finest available or one exact level)
+- Data ranges from the visible region, a level, or the whole file, plus
+  user-defined and logarithmic ranges
+- Legacy palette files, with the legacy default colormap built in
+- Color bar, AMR grid box overlays, and a cursor probe readout
+- Rubber-band zoom into a subregion
+- Contour lines and vector glyph overlays
+- XY line plots through the data
+- 3-D orthogonal slice views with crosshairs and an isometric wireframe
+- Slice sweep and plotfile-sequence animation
+- PNG image export and ASCII slice data export
+- Preference persistence across sessions
+
+## Usage
+
+Launch with an optional dataset path:
+
+```bash
+amrvis_qt [plotfile-directory | FAB-or-MultiFab-header]
+```
+
+File → Open Plotfile Directory... opens an AMReX plotfile directory; File →
+Open Standalone FAB/MultiFab... opens a single FAB or MultiFab header;
+File → Open Plotfile Sequence... animates two or more plotfiles.
+
+Mouse:
+
+- Left click: probe the value under the cursor
+- Left drag: zoom to the rubber-band subregion
+- Middle drag: horizontal line plot (2-D); in 3-D moves the slice along the
+  vertical in-view axis (hold Shift or Ctrl for a line plot)
+- Right drag: vertical line plot (2-D); in 3-D moves the slice along the
+  horizontal in-view axis (hold Shift or Ctrl for a line plot)
+- Mouse wheel: zoom; double click: refit to the window
+
+Keys: B toggles grid boxes, 0 fits to the window, 1-6 pick fixed scales
+(1x-32x), Ctrl+0 composites the finest available level, Ctrl+1-9 show one
+exact level. Ctrl+D opens a Dataset window listing the visible region's raw
+cell values per AMR level.
+
+View → Number Format... sets the printf-style readout format (default
+`%7.5f`).
+
+Headless smoke hooks (used by the test suite under QT_QPA_PLATFORM=offscreen):
+
+```bash
+amrvis_qt --smoke-test <plotfile>        # metadata only
+amrvis_qt --slice-smoke-test <plotfile>  # metadata + initial slice
+amrvis_qt --sequence-smoke-test <pltA> <pltB>
+```
+
+Preferences persist through QSettings (organization and application name
+Amrvis2), e.g. `~/.config/Amrvis2/Amrvis2.conf` on Linux.

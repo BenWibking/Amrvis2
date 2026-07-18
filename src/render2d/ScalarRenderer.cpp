@@ -19,14 +19,6 @@ constexpr std::array<std::array<double, 3>, 6> viridis{{
     {{253.0, 231.0, 37.0}}
 }};
 
-std::uint32_t packArgb(const std::array<std::uint8_t, 3>& color) noexcept
-{
-    return 0xFF000000U
-        | (static_cast<std::uint32_t>(color[0]) << 16U)
-        | (static_cast<std::uint32_t>(color[1]) << 8U)
-        | static_cast<std::uint32_t>(color[2]);
-}
-
 } // namespace
 
 std::array<std::uint8_t, 3> sampleViridis(double normalized) noexcept
@@ -80,6 +72,8 @@ ImageBuffer renderScalarPlane(
     image.height = plane.height;
     image.strideBytes = plane.width * static_cast<int>(sizeof(std::uint32_t));
     image.rgba.resize(static_cast<std::size_t>(pixelCount));
+    const Palette& palette = settings.palette != nullptr
+        ? *settings.palette : builtinPalette(BuiltinPalette::Rainbow);
     for (std::size_t pixel = 0; pixel < image.rgba.size(); ++pixel) {
         if (plane.valid[pixel] == 0) {
             image.rgba[pixel] = settings.invalidColor;
@@ -92,7 +86,7 @@ ImageBuffer renderScalarPlane(
         }
         const auto mapped = settings.logarithmic ? std::log(value) : value;
         const auto normalized = (mapped - rangeMinimum) / (rangeMaximum - rangeMinimum);
-        image.rgba[pixel] = packArgb(sampleViridis(normalized));
+        image.rgba[pixel] = palette.argb(normalized);
     }
     return image;
 }

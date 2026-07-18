@@ -1,10 +1,24 @@
 add_executable(amrvis_qt
+    AnimationPanel.cpp
+    AnimationPanel.hpp
     ColorBarWidget.cpp
     ColorBarWidget.hpp
+    DatasetExtract.hpp
+    DatasetWindow.cpp
+    DatasetWindow.hpp
     ImageView.cpp
     ImageView.hpp
+    IsoWidget.cpp
+    IsoWidget.hpp
+    LinePlotRequest.hpp
+    LinePlotWindow.cpp
+    LinePlotWindow.hpp
     MainWindow.cpp
     MainWindow.hpp
+    NumberFormat.cpp
+    NumberFormat.hpp
+    SetContoursDialog.cpp
+    SetContoursDialog.hpp
     main.cpp
 )
 set_target_properties(amrvis_qt PROPERTIES AUTOMOC ON)

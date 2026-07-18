@@ -21,6 +21,8 @@ Opening a dataset must not load all field values. Viewing a slice, line, point, 
 
 Qt 6 Widgets will provide the desktop application framework. `QImage` and `QPainter` will implement the initial 1-D and 2-D presentation layer. Optional VTK-based 3-D volume rendering may be added later through the same demand-driven data service.
 
+> **Human-maintainer directive (2026-07-17):** The Qt-based Amrvis2 should resemble the old X11-based Amrvis in terms of functionalities and look (where possible), and it must use Amrvis's default colormap by default (the `Palette` file from the legacy source tree). See decisions D-011 and D-012.
+
 ---
 
 ## 2. Instructions for the Coding Agent
@@ -91,7 +93,7 @@ Use these markers throughout the plan:
 | Bounded cache | `[~]` | Pinned byte-budgeted LRU raw-block cache is tested; computed cache and file invalidation remain |
 | Slice query | `[~]` | Finest/exact composition and piecewise-constant sampling are tested on partial AMR coverage |
 | Minimal Qt viewer | `[~]` | One executable asynchronously opens and interactively inspects 2-D/3-D plotfile slices; Phase 0 corpus validation remains |
-| Traditional feature parity | `[ ]` | |
+| Traditional feature parity | `[~]` | Legacy-style UI implemented: palettes (legacy default), color bar, probe, subregion zoom, contours, vectors, line plots, 3-D ortho views, sweep/sequence animation; reference validation remains |
 | Optional VTK volume rendering | `[-]` | Later phase |
 
 ---
@@ -1256,34 +1258,35 @@ Representative datasets must include:
 
 ### Phase 7: Traditional 2-D capability
 
-- [ ] Palette loading and editing.
+- [x] Palette loading and editing. (Legacy `.pal` file loading plus five embedded built-ins; the legacy default `Palette` file is embedded byte-exact and is the application default. Palette *editing* does not exist in legacy Amrvis either and is out of scope.)
 - [x] Linear and logarithmic mapping.
 - [x] User min/max.
 - [x] Visible-region min/max.
 - [x] File and level min/max.
-- [x] Grid-box overlays.
-- [ ] Crosshair coordination.
-- [ ] Subregion selection.
-- [ ] Contours.
-- [ ] Vector overlays.
-- [ ] Line plots.
+- [x] Grid-box overlays. (Legacy colors: coarsest level white, finer levels spread across the palette.)
+- [x] Crosshair coordination.
+- [x] Subregion selection. (Left-drag rubber band zooms the view and re-requests the selected region.)
+- [x] Contours. (Legacy five-mode "Set Contours" dialog; marching squares.)
+- [x] Vector overlays. (Velocity Vectors mode with U/V field selection and name auto-detection.)
+- [x] Line plots. (Middle/right drag, multi-curve XY plot window, ASCII export.)
 - [x] Image export.
-- [ ] Data export.
-- [ ] Keyboard and mouse bindings.
-- [ ] Preference persistence.
+- [x] Data export. (ASCII slice export; line-plot ASCII export.)
+- [x] Subregion data spreadsheet. (Ctrl+D Dataset window: raw per-level values for the selected region with cell-index headers, per-level min/max, and click-to-highlight in the image. Human-maintainer directive, 2026-07-17.)
+- [x] Keyboard and mouse bindings. (`B` boxes, `1`-`6`/`0` scale, `Ctrl+0`-`Ctrl+9` level, `Ctrl+D` dataset window, legacy mouse map.)
+- [x] Preference persistence.
 
 **Exit criteria:** Required traditional workflows pass the compatibility matrix.
 
 ### Phase 8: 3-D orthogonal views and animation
 
-- [ ] Implement three coordinated orthogonal slice views.
-- [ ] Share crosshair and slice state.
-- [ ] Implement slice sweeping.
-- [ ] Implement plotfile-sequence animation.
-- [ ] Implement prefetch with low priority.
-- [ ] Cancel obsolete frames.
-- [ ] Bound animation cache memory.
-- [ ] Add frame timing diagnostics.
+- [x] Implement three coordinated orthogonal slice views.
+- [x] Share crosshair and slice state.
+- [x] Implement slice sweeping.
+- [x] Implement plotfile-sequence animation.
+- [x] Implement prefetch with low priority.
+- [x] Cancel obsolete frames.
+- [x] Bound animation cache memory. (Current frame plus at most one prefetched frame, each behind its own byte-budgeted cache.)
+- [x] Add frame timing diagnostics.
 
 **Exit criteria:** Interactive three-plane navigation and bounded-memory animation work reliably.
 
@@ -1346,14 +1349,15 @@ The agent should maintain test and implementation status in this table during de
 | File/level/region ranges | Yes | `[!]` Phase 0 evidence required | `[~]` | `scalar_renderer` |
 | Palette and color bar | Yes | Measured explicit palette and visible color bar | `[~]` | `legacy-2d-multilevel`, `legacy-3d-orthogonal`, `scalar_renderer` |
 | Grid boxes | Yes | Measured enabled grid overlay | `[~]` | `legacy-2d-multilevel`, `legacy-3d-orthogonal` |
-| Point probe | Yes | `[!]` Phase 0 evidence required | `[ ]` | |
-| Line plot | Yes | `[!]` Phase 0 evidence required | `[ ]` | |
-| Contours | Yes | `[!]` Phase 0 evidence required | `[ ]` | |
-| Vector overlay | Yes | `[!]` Phase 0 evidence required | `[ ]` | |
-| Orthogonal 3-D slices | Yes | Measured simultaneous XY/YZ/XZ views | `[~]` | `legacy-3d-orthogonal` |
-| Slice animation | Yes | `[!]` Phase 0 evidence required | `[ ]` | |
-| Plotfile sequence | Yes | `[!]` Phase 0 evidence required | `[ ]` | |
-| Image export | Yes | `[!]` Phase 0 evidence required | `[ ]` | |
+| Point probe | Yes | `[!]` Phase 0 evidence required | `[~]` | `slice_query`, `line_query` |
+| Line plot | Yes | `[!]` Phase 0 evidence required | `[~]` | `line_query` |
+| Contours | Yes | `[!]` Phase 0 evidence required | `[~]` | `contours` |
+| Vector overlay | Yes | `[!]` Phase 0 evidence required | `[~]` | `vector_glyphs` |
+| Orthogonal 3-D slices | Yes | Measured simultaneous XY/YZ/XZ views | `[~]` | `legacy-3d-orthogonal`, `slice_query` |
+| Slice animation | Yes | `[!]` Phase 0 evidence required | `[~]` | `slice_query` |
+| Plotfile sequence | Yes | `[!]` Phase 0 evidence required | `[~]` | `--sequence-smoke-test` |
+| Image export | Yes | `[!]` Phase 0 evidence required | `[~]` | `scalar_renderer` |
+| Subregion data spreadsheet | Yes | Human-maintainer directive 2026-07-17 (legacy Ctrl+D Dataset window) | `[~]` | `selective_block_read` |
 | EB body masking | Deferred | Human-maintainer deferral; validate during Phase 0 | `[-]` | |
 | VTK volume rendering | Deferred | Decision D-005 | `[-]` | |
 | Remote service | Deferred | Phase 11 scope | `[-]` | |
@@ -1662,6 +1666,20 @@ Add entries whenever a material architectural decision is made.
 - **Reason:** Users should not select or maintain separate application builds for dataset dimension.
 - **Consequence:** Amrvis2 must not expose `DIM` or `AMREX_SPACEDIM` as build configuration. Separate dimensional builds are allowed only for legacy Phase 0 reference capture.
 
+### D-011: Use the legacy Amrvis default colormap as the Amrvis2 default
+
+- **Status:** Accepted (human-maintainer directive, 2026-07-17)
+- **Decision:** The default Amrvis2 colormap is the legacy Amrvis default palette, shipped in the legacy source tree as the binary `Palette` file (`external/Amrvis/Palette`). The file's 256 RGB slots are embedded byte-exact into the binary as `BuiltinPalette::Rainbow`, so the default does not depend on a runtime file. Legacy `.pal` files can also be loaded at runtime, and four more legacy palettes ship as built-ins.
+- **Reason:** The maintainer requires the new application to default to the familiar legacy colormap instead of a modern one.
+- **Consequence:** `ScalarRenderSettings::palette == nullptr` renders with the legacy rainbow; the Qt application selects Rainbow on first start; value-to-slot mapping (including the 27 reserved bottom slots and truncating index cast) mirrors the legacy `AmrPicture` formula.
+
+### D-012: Mirror the legacy X11 UI in functionality and look
+
+- **Status:** Accepted (human-maintainer directive, 2026-07-17)
+- **Decision:** Where the demand-driven architecture permits, the Qt application mirrors the legacy X11/Motif Amrvis interface: the File/View/Variable/Help menu structure and accelerators (`B`, `1`-`0`, `Ctrl+1`-`Ctrl+0`), the right-hand palette panel (variable label, 24 px color bar, 8 value labels, black background), left-drag rubber-band subregion selection with click-to-probe, middle/right-drag line plots (2-D) or slice moves (3-D), the five-mode Set Contours dialog, legacy per-level grid-overlay colors, the 2×2 three-plane layout plus isometric wireframe for 3-D data, and the sweep/file-sequence animation controls with a speed slider.
+- **Reason:** The maintainer requires the new application to resemble the old X11-based Amrvis in functionalities and look, minimizing retraining for existing users.
+- **Consequence:** UI behavior is specified and reviewed against the legacy source (`external/Amrvis/`); deliberate deviations (PNG image export instead of PostScript, scrollbars/wheel instead of fixed scales only, single line-plot window shared by both directions) are documented in the Plan Change Log and must remain exceptions rather than the norm.
+
 ---
 
 ## 32. Rejected Approaches
@@ -1716,6 +1734,25 @@ Add entries whenever a material architectural decision is made.
 
 The agent should append entries; do not rewrite history.
 
+### 2026-07-17
+
+- **Human-maintainer directive:** the Qt-based Amrvis2 should resemble the old X11-based Amrvis in functionalities and look (where possible). Recorded as decision D-012.
+- **Human-maintainer directive:** use Amrvis's default colormap by default, from `external/Amrvis/Palette`. Recorded as decision D-011. (Already satisfied by the palette module: the legacy `Palette` file is embedded byte-exact as the default `BuiltinPalette::Rainbow`.)
+- Implemented the toolkit-neutral palette module (legacy `.pal` loader, five embedded built-in palettes, legacy value-to-slot and level-color mapping) and made the scalar renderer palette-driven with the legacy rainbow as default.
+- Implemented marching-squares contours and legacy-geometry vector glyphs in `render2d`, and the fine-over-coarse `LineQuery` in the query layer, all with unit/integration tests.
+- Qt application restructured toward the legacy UI: File/View/Variable/Help menus with legacy accelerators, palette submenu with built-ins and `.pal` loading, legacy-look color bar, click probe with legacy readout, rubber-band subregion zoom with region-aware re-requests, window title with time/levels, QSettings preference persistence.
+- Added the five-mode Set Contours dialog (Raster, Raster & Contours, Color Contours, B/W Contours, Velocity Vectors) with contour count and U/V vector-field selection.
+- Added the multi-curve XY line-plot window (middle/right drag, legend, zoom, ASCII export) backed by `LineQuery`.
+- Added coordinated 3-D orthogonal views (XY/XZ/YZ) with shared slice positions, palette-colored crosshairs, middle/right-drag slice moves (Shift/Ctrl for line plots), and an isometric wireframe widget with per-level boxes and slice planes.
+- Added animation: 3-D slice sweep with per-axis stepping and wrapping, plotfile-sequence playback with preserved UI state across frames, one-frame low-priority prefetch behind bounded per-dataset caches, obsolete-frame cancellation, a speed slider, and frame-switch timing diagnostics. Added the `--sequence-smoke-test` CLI hook.
+- Documented deviations from the legacy UI: PNG image export replaces PostScript/RGB/PPM export, wheel/scrollbar navigation supplements fixed scales, and one line-plot window hosts both line directions.
+- **Human-maintainer directive:** add subregion data spreadsheet support matching the legacy Ctrl+D Dataset window (select a region, Ctrl+D shows raw values in a spreadsheet). Implemented: per-level raw-value tabs with i/j index headers and per-level min/max over the selected region, async block reads, 512-cell truncation guard, and click-to-highlight of the corresponding cell in the image. Authorized and recorded as a `Yes` row in the compatibility matrix.
+- Added ASCII slice data export (File menu) alongside the existing PNG image export and line-plot ASCII export.
+- Added CTest coverage for the Qt slice and sequence smoke paths (`qt_slice_smoke_2d`, `qt_slice_smoke_3d`, `qt_sequence_smoke`) using a `fixture_materializer` test tool that synthesizes FAB payloads into copies of the checked-in metadata-only fixtures.
+- Added README feature and usage documentation (mouse map, key bindings, CLI smoke hooks, preference storage).
+- Added the legacy Number Format dialog (printf-style readout format, default `%7.5f`, persisted) applied to the color bar, probe readouts, dataset spreadsheet, and line-plot ticks.
+- Validated the full tree: default, headless, and ASan/UBSan sanitizer presets all build warning-free with 15/15, 10/10, and 10/10 tests passing.
+
 ### 2026-07-16
 
 - Created initial modernization plan.
@@ -1738,14 +1775,10 @@ The agent should append entries; do not rewrite history.
 
 ## 35. Immediate Next Actions
 
-- [ ] Capture the legacy Amrvis source identity, build environment, and reproduction commands before beginning later milestones.
-- [ ] Select the compatibility datasets and create the versioned corpus manifest.
-- [ ] Archive the initial corpus, publish its SHA-256 checksums, and verify a clean restore.
-- [ ] Supply usage evidence or request an explicit human-maintainer decision for every current `Yes` in the compatibility matrix.
-- [ ] Create the repository skeleton and top-level CMake configuration.
-- [ ] Add this file as `PLAN.md` at the repository root.
-- [ ] Implement the metadata types.
-- [ ] Build a metadata-only `dataset_inspect` tool.
-- [ ] Instrument and prototype one selective plotfile FAB/component read.
-- [ ] Record the first measured bytes-read result in this plan.
-- [ ] Add the first decision or risk discovered during the prototype.
+- [ ] Supply usage evidence or request an explicit human-maintainer decision for every remaining `[!]` in the compatibility matrix (point probe, line plot, contours, vector overlay, slice animation, plotfile sequence, image export, file/level/region ranges).
+- [ ] Publish the compatibility corpus to a durable project-controlled location and re-verify SHA-256 checksums after clean restore.
+- [ ] Add data export (slice/line data files; evaluate FAB export).
+- [ ] Add a CTest that materializes FAB payloads for the checked-in fixtures and runs the Qt `--slice-smoke-test` / `--sequence-smoke-test` paths (today those paths are verified manually; the checked-in fixtures carry metadata only).
+- [ ] Validate the interactive workflows against the completed Phase 0 corpus (probe values, line plots, min/max, representative images).
+- [ ] Add Linux and macOS CI.
+- [ ] Write the user documentation and the known-differences-from-legacy document (Section 28).

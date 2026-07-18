@@ -1,20 +1,41 @@
 #include "ColorBarWidget.hpp"
+#include "NumberFormat.hpp"
 
-#include <amrvis/render2d/ScalarRenderer.hpp>
+#include <amrvis/render2d/Palette.hpp>
 
-#include <QLinearGradient>
 #include <QPainter>
 #include <QPaintEvent>
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace amrvis::qt {
 
+namespace {
+
+// Legacy Amrvis TOTALPALWIDTH: the whole color bar panel is 150 px wide.
+constexpr int totalWidth = 150;
+constexpr int margin = 8;
+constexpr int titleHeight = 24;
+constexpr int barWidth = 24;
+constexpr int labelGap = 6;
+constexpr int labelCount = 8;
+
+} // namespace
+
 ColorBarWidget::ColorBarWidget(QWidget* parent)
     : QWidget(parent)
+    , m_numberFormat(defaultNumberFormat())
 {
-    setMinimumSize(150, 280);
+    setFixedWidth(totalWidth);
+    setMinimumHeight(280);
+}
+
+void ColorBarWidget::setPalette(const amrvis::Palette* palette)
+{
+    m_palette = palette;
+    update();
 }
 
 void ColorBarWidget::setFieldRange(QString fieldName, double minimum, double maximum)
@@ -23,6 +44,12 @@ void ColorBarWidget::setFieldRange(QString fieldName, double minimum, double max
     m_minimum = minimum;
     m_maximum = maximum;
     m_hasRange = true;
+    update();
+}
+
+void ColorBarWidget::setNumberFormat(QString format)
+{
+    m_numberFormat = std::move(format);
     update();
 }
 
@@ -37,38 +64,49 @@ void ColorBarWidget::paintEvent(QPaintEvent* event)
 {
     QWidget::paintEvent(event);
     QPainter painter(this);
-    painter.fillRect(rect(), palette().window());
-    painter.setPen(palette().windowText().color());
+    painter.fillRect(rect(), Qt::black);
+    painter.setPen(Qt::white);
 
     if (!m_hasRange) {
-        painter.drawText(rect().adjusted(8, 8, -8, -8),
+        painter.drawText(rect().adjusted(margin, margin, -margin, -margin),
             Qt::AlignCenter | Qt::TextWordWrap, tr("No scalar range"));
         return;
     }
 
-    constexpr int margin = 12;
-    constexpr int titleHeight = 30;
-    constexpr int labelWidth = 82;
-    const QRect bar(margin, margin + titleHeight, 28,
+    const QRect bar(margin, margin + titleHeight, barWidth,
         std::max(1, height() - 2 * margin - titleHeight));
+    const auto title = painter.fontMetrics().elidedText(
+        m_fieldName, Qt::ElideRight, width() - 2 * margin);
     painter.drawText(QRect(margin, margin, width() - 2 * margin, titleHeight),
-        Qt::AlignLeft | Qt::AlignVCenter, m_fieldName);
+        Qt::AlignLeft | Qt::AlignVCenter, title);
 
-    QLinearGradient gradient(bar.topLeft(), bar.bottomLeft());
-    constexpr int samples = 16;
-    for (int sample = 0; sample <= samples; ++sample) {
-        const auto normalized = static_cast<double>(sample) / samples;
-        const auto color = sampleViridis(1.0 - normalized);
-        gradient.setColorAt(normalized, QColor(color[0], color[1], color[2]));
+    const auto& palette = m_palette != nullptr
+        ? *m_palette : builtinPalette(BuiltinPalette::Rainbow);
+    const auto rows = std::max(1, bar.height() - 1);
+    for (int row = 0; row < bar.height(); ++row) {
+        const auto normalized = 1.0
+            - static_cast<double>(row) / static_cast<double>(rows);
+        painter.setPen(QColor::fromRgb(static_cast<QRgb>(palette.argb(normalized))));
+        painter.drawLine(bar.left(), bar.top() + row,
+            bar.left() + bar.width() - 1, bar.top() + row);
     }
-    painter.fillRect(bar, gradient);
+    painter.setPen(Qt::white);
     painter.drawRect(bar.adjusted(0, 0, -1, -1));
 
-    const QRect labels(bar.right() + 8, bar.top(), labelWidth, bar.height());
-    painter.drawText(labels, Qt::AlignLeft | Qt::AlignTop,
-        QString::number(m_maximum, 'g', 6));
-    painter.drawText(labels, Qt::AlignLeft | Qt::AlignBottom,
-        QString::number(m_minimum, 'g', 6));
+    const auto labelHeight = painter.fontMetrics().height();
+    const auto labelLeft = bar.left() + bar.width() + labelGap;
+    for (int label = 0; label < labelCount; ++label) {
+        const auto fraction = static_cast<double>(label)
+            / static_cast<double>(labelCount - 1);
+        const auto value = m_maximum + fraction * (m_minimum - m_maximum);
+        const auto center = bar.top()
+            + static_cast<int>(std::lround(fraction * static_cast<double>(rows)));
+        const auto top = std::clamp(center - labelHeight / 2, bar.top(),
+            std::max(bar.top(), bar.top() + bar.height() - labelHeight));
+        painter.drawText(QRect(labelLeft, top, width() - labelLeft - margin,
+                labelHeight), Qt::AlignLeft | Qt::AlignVCenter,
+            formatNumber(value, m_numberFormat));
+    }
 }
 
 } // namespace amrvis::qt

@@ -55,9 +55,21 @@ struct SliceRequest {
     CompositionPolicy composition = CompositionPolicy::FinestAvailable;
 };
 
+struct LineRequest {
+    DatasetId dataset;
+    FieldId field;
+    int component = 0;
+    int axis = 0;                              // line direction: 0=x, 1=y, 2=z
+    std::array<double, 3> fixedCoordinates{};  // physical coords of the other axes
+    int maximumLevel = 0;
+    CompositionPolicy composition = CompositionPolicy::FinestAvailable;
+};
+
 [[nodiscard]] std::vector<std::string> validateBlockRequest(const BlockRequest& request);
 [[nodiscard]] std::vector<std::string> validateSliceRequest(
     const SliceRequest& request, int datasetDimension);
+[[nodiscard]] std::vector<std::string> validateLineRequest(
+    const LineRequest& request, int datasetDimension);
 
 } // namespace amrvis
 

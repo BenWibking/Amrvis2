@@ -1,34 +1,110 @@
 #pragma once
 
+#include "DatasetWindow.hpp"
+#include "NumberFormat.hpp"
+#include "SetContoursDialog.hpp"
+
 #include <amrvis/core/Result.hpp>
 #include <amrvis/io/PlotfileMetadataReader.hpp>
+#include <amrvis/query/SliceQuery.hpp>
 #include <amrvis/render2d/ImageBuffer.hpp>
+#include <amrvis/render2d/Palette.hpp>
+#include <amrvis/render2d/VectorGlyphs.hpp>
 
+#include <QElapsedTimer>
 #include <QMainWindow>
+#include <QStringList>
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <stop_token>
+#include <string>
+#include <utility>
+#include <vector>
 
-class QComboBox;
+class QAction;
+class QActionGroup;
 class QCheckBox;
+class QCloseEvent;
+class QColor;
+class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
+class QLineF;
+class QMenu;
 class QPlainTextEdit;
-class QSlider;
+class QStackedWidget;
 class QTimer;
 class QTreeWidget;
+class QRectF;
+class QWidget;
 
 namespace amrvis {
 class PlotfileDataset;
-struct SliceQueryResult;
+struct DatasetMetadata;
+struct LineResult;
+enum class CompositionPolicy : std::uint8_t;
 }
 
 namespace amrvis::qt {
 
+class AnimationPanel;
 class ColorBarWidget;
+class DatasetWindow;
 class ImageView;
+class IsoWidget;
+class LinePlotWindow;
+
+enum class RangeMode {
+    Visible,
+    Level,
+    File,
+    User
+};
+
+struct SliceDisplayResult {
+    SliceQueryResult slice;
+    ImageBuffer image;
+    std::vector<VectorSegment> vectors;
+    std::string fieldName;
+    double minimum = 0.0;
+    double maximum = 1.0;
+    bool logarithmic = false;
+};
+
+struct InitialSliceResult {
+    std::shared_ptr<PlotfileDataset> dataset;
+    // One entry per displayed view, ordered by normal axis (2-D: one entry).
+    std::vector<SliceDisplayResult> displays;
+    // First line of the plotfile Header when the path is a plotfile
+    // directory; empty for standalone datasets.
+    std::string fileVersion;
+};
+
+// Everything needed to render one frame's slice(s) off the GUI thread. The
+// sequence path builds this from the current UI state so frame switches keep
+// the user's field/level/range/log/palette/visible-region settings; empty or
+// default entries mean "fall back to the new dataset's defaults" (midpoint
+// slice positions, whole domain, 640x640 output).
+struct FrameSliceSpec {
+    DisplayMode displayMode = DisplayMode::Raster;
+    std::uint32_t field = 0;
+    int levelSelection = -1;  // level combo data: -1 = finest available
+    RangeMode rangeMode = RangeMode::Visible;
+    std::optional<std::pair<double, double>> userRange;
+    bool logarithmic = false;
+    Palette palette;
+    std::uint32_t vectorUField = 0;
+    std::uint32_t vectorVField = 0;
+    int contourCount = 10;
+    bool defaultPositions = true;
+    std::array<double, 3> slicePositions{0.0, 0.0, 0.0};
+    std::vector<std::optional<RealBox>> visibleRegions;  // per view, normal order
+    std::vector<std::array<int, 2>> outputSizes;         // per view, normal order
+};
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -37,52 +113,216 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
 
     void openDataset(const std::filesystem::path& path, bool metadataOnly = false);
+    // Opens a plotfile sequence (the legacy "-a" file animation): frames are
+    // the plotfile directories, sorted by name; requires at least two valid
+    // plotfiles. Opening a single dataset closes the sequence again.
+    void openSequence(const std::vector<std::filesystem::path>& frames);
+    // Steps the open sequence by direction frames, wrapping at the ends; the
+    // same slot the sequence step buttons and the smoke test hook use.
+    void stepSequence(int direction);
 
 signals:
     void datasetOpenFinished(bool success);
     void initialSliceFinished(bool success);
+    // Emitted once a sequence frame's slice(s) are on screen; the offscreen
+    // smoke test drives frame stepping off it.
+    void sequenceFrameDisplayed(int index);
+    void sequenceFrameFailed();
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
 
 private:
+    // Everything that used to be singular about the displayed slice, per
+    // view: the 2-D stacked page owns one of these, the 3-D grid owns three
+    // (one per plane normal, indexed by normal axis). Each view runs its own
+    // async slice pipeline (stop source + generation) so moving one slice
+    // plane only re-slices the view normal to it.
+    struct PlaneViewState {
+        ImageView* view = nullptr;
+        int normal = 1;
+        QString label;      // "2-D" / "YZ" / "XZ" / "XY"
+        ScalarPlane plane;
+        QString fieldName;
+        std::optional<RealBox> visibleRegion;
+        double displayMinimum = 0.0;
+        double displayMaximum = 1.0;
+        bool displayLogarithmic = false;
+        std::vector<VectorSegment> vectorSegments;
+        std::stop_source stopSource;
+        std::uint64_t sliceGeneration = 0;
+        // Slice requests currently on a worker for this view; the sweep
+        // playback skips ticks while one is in flight.
+        int pendingRequests = 0;
+    };
+
+    // One prefetched sequence frame: the dataset plus its rendered slice(s),
+    // consumable only while the slice spec that produced it is unchanged.
+    struct PrefetchedFrame {
+        int frameIndex = -1;
+        std::uint64_t specGeneration = 0;
+        bool defaultPositions = false;
+        InitialSliceResult result;
+    };
+
     void chooseDataset();
     void chooseStandaloneDataset();
     void exportImage();
+    void exportSliceData();
+    void createMenus();
+    void rebuildVariableMenu();
+    void rebuildLevelMenu();
+    void syncMenuChecks();
+    void syncPaletteChecks();
+    void selectBuiltinPalette(int index);
+    void loadPaletteFile();
+    void applyPalette(const Palette& palette, std::optional<int> builtinIndex,
+        const QString& filePath);
+    void showContoursDialog();
+    void applyContourSettings(DisplayMode mode, int count, int uField, int vField);
+    void showNumberFormatDialog();
+    void applyNumberFormat(const QString& format);
+    void validateVectorMode();
+    void ensureVectorFieldDefaults();
+    void showDatasetWindow();
+    void closeDatasetWindow();
+    void refreshDatasetWindow();
+    void datasetCellActivated(const RealBox& physicalCell);
+    [[nodiscard]] std::optional<DatasetRequest> buildDatasetRequest() const;
+    void showInfoDialog();
+    void showMetadata(const PlotfileMetadataResult& result, const std::filesystem::path& path);
+    void updateDiagnostics();
+    void updateWindowTitle();
+    void restoreSettings();
+    void saveSettings();
+
+    // Per-view wiring and display updates.
+    void wireView(PlaneViewState& state);
+    [[nodiscard]] std::vector<PlaneViewState*> currentViews();
+    void setActiveView(PlaneViewState& state);
+    [[nodiscard]] std::array<int, 2> displayAxes(int normal) const;
+    void probeMoved(PlaneViewState& state, int x, int displayY);
+    void probeClicked(PlaneViewState& state, int x, int displayY);
+    void rubberBandZoom(PlaneViewState& state, const QRectF& sceneRect);
+    void linePlotRequested(PlaneViewState& state, int imageX, int imageY,
+        Qt::MouseButton button);
+    void sliceMoveRequested(PlaneViewState& state, int imageX, int imageY,
+        Qt::MouseButton button);
+    void fitView(PlaneViewState& state);
+    void fitViewToWindow();
+    void showSlice(PlaneViewState& state, const ImageBuffer& image,
+        const SliceQueryResult& result, const QString& fieldName,
+        double minimum, double maximum, bool logarithmic,
+        const std::vector<VectorSegment>& vectors);
+    void updateOverlay(PlaneViewState& state);
+    void updateOverlays();
+    void updateGridBoxes(PlaneViewState& state);
+    void updateGridBoxes();
+    void updateCrosshairs(PlaneViewState& state);
+    void updateCrosshairs();
+    [[nodiscard]] QLineF planeSegmentToScene(const PlaneViewState& state,
+        float x0, float y0, float x1, float y1) const;
+    [[nodiscard]] QColor contourValueColor(const PlaneViewState& state,
+        double value) const;
+    [[nodiscard]] QColor monochromeContourColor() const;
+    [[nodiscard]] QColor sliceAxisColor(int axis) const;
+
+    // Shared 3-D slice positions (physical coordinates per axis).
+    void configureSlicePositionControls();
+    void setSlicePosition(int axis, double value);
+
+    // Slice requests: the debounce timer coalesces into per-view requests.
+    void scheduleSliceRequest();
+    void scheduleSliceRequest(PlaneViewState& state);
+    void flushSliceRequests();
+    void requestSlice(PlaneViewState& state);
     void requestInitialSlice(const std::filesystem::path& path, std::uint64_t generation);
     void configureSliceControls();
-    void updateSlicePositionRange();
-    void scheduleSliceRequest();
-    void requestSlice();
-    void updateGridBoxes();
-    void showMetadata(const PlotfileMetadataResult& result, const std::filesystem::path& path);
-    void showSlice(const ImageBuffer& image, const SliceQueryResult& result,
-        const std::filesystem::path& path, const QString& fieldName,
-        double minimum, double maximum, bool logarithmic);
-    void updateDiagnostics();
+    void appendLinePlotCurve(const LineResult& line, const std::string& fieldName,
+        int dimension, int primaryFixedAxis,
+        const std::array<double, 3>& fixedCoordinates, int maximumLevel,
+        CompositionPolicy composition);
 
-    ImageView* m_imageView = nullptr;
+    // Animation: one shared playback timer drives either the 3-D plane sweep
+    // or plotfile-sequence playback, never both at once.
+    enum class PlaybackMode {
+        None,
+        Sweep,
+        Sequence
+    };
+    void choosePlotfileSequence();
+    void closeSequence();
+    void goToSequenceFrame(int index);
+    void toggleSequencePlayback();
+    void stepSweep(int direction);
+    void toggleSweepPlayback();
+    void setPlaybackMode(PlaybackMode mode);
+    void playbackTick();
+    void applySpeed();
+
+    // Sequence frame switching. At most one sync frame load and one
+    // prefetch are alive; everything superseded is cancelled via stop
+    // sources and discarded via generation counters.
+    void startFrameLoad(int index, std::uint64_t generation);
+    void finishFrameLoad(InitialSliceResult result, bool defaultPositions);
+    void displayFrameResult(InitialSliceResult& result, bool defaultPositions);
+    void configureSequenceControls(bool defaultPositions);
+    [[nodiscard]] FrameSliceSpec buildFrameSpec();
+    void startPrefetch(int frameIndex);
+    void discardPrefetch();
+
+    QStackedWidget* m_stack = nullptr;
+    IsoWidget* m_isoWidget = nullptr;
     QLabel* m_probeLabel = nullptr;
     ColorBarWidget* m_colorBar = nullptr;
+    LinePlotWindow* m_linePlotWindow = nullptr;
+    DatasetWindow* m_datasetWindow = nullptr;
     QComboBox* m_fieldSelector = nullptr;
     QComboBox* m_levelSelector = nullptr;
-    QComboBox* m_normalSelector = nullptr;
     QComboBox* m_rangeMode = nullptr;
     QCheckBox* m_logarithmic = nullptr;
     QCheckBox* m_gridBoxes = nullptr;
     QDoubleSpinBox* m_rangeMinimum = nullptr;
     QDoubleSpinBox* m_rangeMaximum = nullptr;
-    QDoubleSpinBox* m_slicePosition = nullptr;
-    QSlider* m_sliceSlider = nullptr;
+    QWidget* m_slicePositionControls = nullptr;
+    std::array<QDoubleSpinBox*, 3> m_sliceSpinboxes{nullptr, nullptr, nullptr};
     QTimer* m_sliceDebounce = nullptr;
     QTreeWidget* m_metadataTree = nullptr;
     QPlainTextEdit* m_diagnostics = nullptr;
+    QMenu* m_variableMenu = nullptr;
+    QMenu* m_levelMenu = nullptr;
+    QActionGroup* m_variableGroup = nullptr;
+    QActionGroup* m_levelGroup = nullptr;
+    QActionGroup* m_paletteGroup = nullptr;
+    QAction* m_boxesAction = nullptr;
+    QAction* m_fitScaleAction = nullptr;
+    QAction* m_infoAction = nullptr;
+    QAction* m_contoursAction = nullptr;
+    QAction* m_datasetAction = nullptr;
     std::shared_ptr<PlotfileDataset> m_dataset;
-    ScalarPlane m_displayPlane;
-    int m_displayDimension = 0;
-    int m_displayNormalDirection = 2;
+    std::shared_ptr<const DatasetMetadata> m_openMetadata;
+    std::string m_fileVersion;
+    PlaneViewState m_view2d;
+    std::array<PlaneViewState, 3> m_planeViews;
+    PlaneViewState* m_activeView = nullptr;
+    int m_viewDimension = 0;
+    std::array<double, 3> m_slicePosition3d{0.0, 0.0, 0.0};
+    bool m_pendingAllViews = false;
+    std::vector<PlaneViewState*> m_pendingViews;
+    std::stop_source m_initialStopSource;
+    DisplayMode m_displayMode = DisplayMode::Raster;
+    int m_contourCount = 10;
+    int m_vectorUField = -1;
+    int m_vectorVField = -1;
     std::filesystem::path m_datasetPath;
-    std::stop_source m_sliceStopSource;
+    Palette m_palette = builtinPalette(BuiltinPalette::Rainbow);
+    int m_builtinIndex = 0;
+    bool m_paletteFromFile = false;
+    QString m_paletteFilePath;
+    QString m_numberFormat = defaultNumberFormat();
+    QStringList m_probeLines;
     bool m_controlsReady = false;
     std::uint64_t m_generation = 0;
-    std::uint64_t m_sliceGeneration = 0;
     std::uint64_t m_activeRequests = 0;
     std::uint64_t m_staleResults = 0;
     std::uint64_t m_lastFilesRead = 0;
@@ -94,6 +334,25 @@ private:
     std::uint64_t m_cacheResidentBytes = 0;
     std::uint64_t m_cachePinnedBytes = 0;
     std::uint64_t m_cacheEvictions = 0;
+
+    // Animation state.
+    AnimationPanel* m_animationPanel = nullptr;
+    QTimer* m_playbackTimer = nullptr;
+    PlaybackMode m_playbackMode = PlaybackMode::None;
+    std::vector<std::filesystem::path> m_sequenceFrames;
+    int m_sequenceIndex = -1;
+    bool m_sequenceInFlight = false;
+    // Bumped by every slice-affecting UI change; prefetched frames store the
+    // value they were built against and are discarded once it moves on.
+    std::uint64_t m_specGeneration = 0;
+    // Bumped whenever the prefetch slot is cancelled/invalidated, so a late
+    // prefetch watcher knows to drop its result.
+    std::uint64_t m_prefetchGeneration = 0;
+    std::uint64_t m_sequenceDatasetCounter = 0;
+    std::stop_source m_prefetchStopSource;
+    std::optional<PrefetchedFrame> m_prefetched;
+    QElapsedTimer m_frameTimer;
+    qint64 m_lastFrameSwitchMs = 0;
 };
 
 } // namespace amrvis::qt

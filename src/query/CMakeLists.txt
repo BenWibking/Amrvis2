@@ -1,4 +1,4 @@
-add_library(amrvis_query SliceQuery.cpp)
+add_library(amrvis_query LineQuery.cpp SliceQuery.cpp)
 add_library(Amrvis::query ALIAS amrvis_query)
 
 target_include_directories(amrvis_query

@@ -1,6 +1,10 @@
 add_library(amrvis_render2d
+    BuiltinPalettes.cpp
+    Contours.cpp
     ImageBuffer.cpp
+    Palette.cpp
     ScalarRenderer.cpp
+    VectorGlyphs.cpp
 )
 add_library(Amrvis::render2d ALIAS amrvis_render2d)
 

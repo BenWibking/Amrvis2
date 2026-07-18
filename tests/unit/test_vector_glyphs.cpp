@@ -1,0 +1,113 @@
+#include <amrvis/render2d/VectorGlyphs.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdlib>
+#include <iostream>
+#include <stdexcept>
+
+namespace {
+
+void require(bool condition, const char* message)
+{
+    if (!condition) {
+        std::cerr << "FAILED: " << message << '\n';
+        std::exit(1);
+    }
+}
+
+bool nearlyEqual(float a, float b, float tolerance = 1.0e-5F)
+{
+    return std::fabs(a - b) <= tolerance;
+}
+
+amrvis::ScalarPlane makePlane(int width, int height, float value)
+{
+    amrvis::ScalarPlane plane;
+    plane.width = width;
+    plane.height = height;
+    const auto pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    plane.values.assign(pixelCount, value);
+    plane.valid.assign(pixelCount, 1);
+    plane.sourceLevel.assign(pixelCount, 0);
+    return plane;
+}
+
+} // namespace
+
+int main()
+{
+    // Constant (u, v) = (1, 0) on a 20x10 plane, count 10: longest side 20
+    // partitions into 10 segments of 2 pixels, so stride 2, arrowMax 2.5,
+    // arrows at columns 0..18 step 2 and rows 0..8 step 2 (50 arrows,
+    // each contributing one shaft and two head segments).
+    auto uComponent = makePlane(20, 10, 1.0F);
+    const auto vComponent = makePlane(20, 10, 0.0F);
+    const auto segments = amrvis::generateVectorGlyphs(uComponent, vComponent, 10);
+    require(segments.size() == 150, "wrong total segment count");
+
+    float minBaseX = 1.0e30F;
+    float maxBaseX = -1.0e30F;
+    float minBaseY = 1.0e30F;
+    float maxBaseY = -1.0e30F;
+    for (std::size_t arrow = 0; arrow + 2 < segments.size(); arrow += 3) {
+        const auto& shaft = segments[arrow];
+        const auto& headA = segments[arrow + 1];
+        const auto& headB = segments[arrow + 2];
+
+        require(nearlyEqual(shaft.y0, shaft.y1), "shaft is not horizontal");
+        require(nearlyEqual(shaft.x1 - shaft.x0, 2.5F), "shaft length is not arrowMax");
+        require(nearlyEqual(std::fmod(shaft.x0 - 0.5F, 2.0F), 0.0F)
+                && nearlyEqual(std::fmod(shaft.y0 - 0.5F, 2.0F), 0.0F),
+            "arrow is not anchored on a stride cell center");
+        minBaseX = std::min(minBaseX, shaft.x0);
+        maxBaseX = std::max(maxBaseX, shaft.x0);
+        minBaseY = std::min(minBaseY, shaft.y0);
+        maxBaseY = std::max(maxBaseY, shaft.y0);
+
+        // Head barbs start at the shaft tip, set back 0.25 of the arrow
+        // vector and offset 0.125 of it to either side.
+        require(nearlyEqual(headA.x0, shaft.x1) && nearlyEqual(headA.y0, shaft.y1),
+            "head segment does not start at the shaft tip");
+        require(nearlyEqual(headB.x0, shaft.x1) && nearlyEqual(headB.y0, shaft.y1),
+            "head segment does not start at the shaft tip");
+        require(nearlyEqual(headA.x1, shaft.x1 - 0.625F)
+                && nearlyEqual(headA.y1, shaft.y1 + 0.3125F),
+            "first head barb geometry mismatch");
+        require(nearlyEqual(headB.x1, shaft.x1 - 0.625F)
+                && nearlyEqual(headB.y1, shaft.y1 - 0.3125F),
+            "second head barb geometry mismatch");
+    }
+    require(nearlyEqual(minBaseX, 0.5F) && nearlyEqual(maxBaseX, 18.5F)
+            && nearlyEqual(minBaseY, 0.5F) && nearlyEqual(maxBaseY, 8.5F),
+        "arrow placement does not cover the expected stride cells");
+
+    // An invalid sample suppresses exactly its arrow (3 segments).
+    uComponent.valid[0] = 0;
+    const auto masked = amrvis::generateVectorGlyphs(uComponent, vComponent, 10);
+    require(masked.size() == 147, "invalid sample was not skipped");
+
+    const auto zeroU = makePlane(20, 10, 0.0F);
+    const auto zeroV = makePlane(20, 10, 0.0F);
+    const auto zero = amrvis::generateVectorGlyphs(zeroU, zeroV, 10);
+    require(zero.empty(), "zero field produced segments");
+
+    const auto mismatched = makePlane(10, 10, 0.0F);
+    bool threw = false;
+    try {
+        (void)amrvis::generateVectorGlyphs(uComponent, mismatched, 10);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    require(threw, "mismatched component sizes were accepted");
+    threw = false;
+    try {
+        (void)amrvis::generateVectorGlyphs(uComponent, uComponent, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    require(threw, "a zero glyph count was accepted");
+
+    return 0;
+}

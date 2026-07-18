@@ -16,5 +16,13 @@ struct ScalarPlane {
     std::vector<std::int16_t> sourceLevel;
 };
 
+struct LineResult {
+    int axis = 0;
+    std::vector<double> positions;      // cell-center physical coordinates along axis
+    std::vector<float> values;
+    std::vector<std::uint8_t> valid;
+    std::vector<std::int16_t> sourceLevel;
+};
+
 } // namespace amrvis
 

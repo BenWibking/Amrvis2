@@ -1,0 +1,112 @@
+#include <amrvis/render2d/Palette.hpp>
+#include <amrvis/render2d/ScalarRenderer.hpp>
+
+#include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <iterator>
+#include <stdexcept>
+#include <vector>
+
+namespace {
+
+void require(bool condition, const char* message)
+{
+    if (!condition) {
+        std::cerr << "FAILED: " << message << '\n';
+        std::exit(1);
+    }
+}
+
+std::vector<char> readBytes(const std::filesystem::path& path)
+{
+    std::ifstream stream(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+}
+
+} // namespace
+
+int main(int argc, char** argv)
+{
+    require(argc == 2, "usage: test_palette <path to palettes/rainbow.pal>");
+    const std::filesystem::path rainbowPath(argv[1]);
+
+    const auto fileBytes = readBytes(rainbowPath);
+    require(fileBytes.size() == 768 || fileBytes.size() == 1024,
+        "rainbow.pal is not a legacy sequential palette");
+
+    // The builtin rainbow reproduces the legacy palette file bytes exactly.
+    const auto& rainbow = amrvis::builtinPalette(amrvis::BuiltinPalette::Rainbow);
+    bool channelsMatch = true;
+    for (int index = 0; index < amrvis::Palette::slotCount; ++index) {
+        const auto offset = static_cast<std::size_t>(index);
+        const auto& color = rainbow.slot(index);
+        channelsMatch = channelsMatch
+            && color.red == static_cast<std::uint8_t>(fileBytes[offset])
+            && color.green == static_cast<std::uint8_t>(fileBytes[256 + offset])
+            && color.blue == static_cast<std::uint8_t>(fileBytes[512 + offset]);
+    }
+    require(channelsMatch, "builtin rainbow does not match rainbow.pal bytes");
+
+    // load() round-trips the same byte content.
+    const auto loaded = amrvis::Palette::load(rainbowPath);
+    bool roundTrip = true;
+    for (int index = 0; index < amrvis::Palette::slotCount; ++index) {
+        roundTrip = roundTrip && loaded.slotArgb(index) == rainbow.slotArgb(index);
+    }
+    require(roundTrip, "Palette::load did not round-trip the builtin rainbow");
+
+    // load() rejects a truncated file.
+    const auto truncatedPath = std::filesystem::temp_directory_path()
+        / "amrvis_test_palette_truncated.pal";
+    {
+        std::ofstream stream(truncatedPath, std::ios::binary);
+        stream.write(fileBytes.data(), 100);
+    }
+    bool threw = false;
+    try {
+        (void)amrvis::Palette::load(truncatedPath);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    std::filesystem::remove(truncatedPath);
+    require(threw, "Palette::load accepted a truncated palette file");
+
+    // load() rejects an unreadable file.
+    threw = false;
+    try {
+        (void)amrvis::Palette::load(rainbowPath.parent_path() / "no_such_palette.pal");
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    require(threw, "Palette::load accepted a missing palette file");
+
+    // The normalized endpoints map to distinct colors and out-of-range t clamps.
+    require(rainbow.argb(0.0) != rainbow.argb(1.0),
+        "normalized endpoints mapped to one color");
+    require(rainbow.argb(-0.5) == rainbow.argb(0.0), "argb did not clamp below zero");
+    require(rainbow.argb(1.5) == rainbow.argb(1.0), "argb did not clamp above one");
+
+    // The coarsest drawn level is white-ish, finer levels use palette colors.
+    const auto coarseColor = rainbow.levelColor(0, 3);
+    require((coarseColor & 0x00FFFFFFU) == 0x00FFFFFFU, "level 0 color is not white");
+    require(rainbow.levelColor(1, 3) != coarseColor, "finer level reused the white color");
+
+    // The scalar renderer defaults to the builtin rainbow palette.
+    amrvis::ScalarPlane plane;
+    plane.width = 2;
+    plane.height = 1;
+    plane.values = {0.0F, 1.0F};
+    plane.valid = {1, 1};
+    plane.sourceLevel = {0, 0};
+    const amrvis::ScalarRenderSettings settings;
+    require(settings.palette == nullptr, "default render settings carry a palette");
+    const auto image = amrvis::renderScalarPlane(plane, settings);
+    require(image.valid(), "renderer produced an invalid image buffer");
+    require(image.rgba[0] == rainbow.argb(0.0), "minimum value color mismatch");
+    require(image.rgba[1] == rainbow.argb(1.0), "maximum value color mismatch");
+    require(image.rgba[0] != image.rgba[1], "renderer endpoints mapped to one color");
+    return 0;
+}
