@@ -1535,6 +1535,13 @@ void MainWindow::linePlotRequested(PlaneViewState& state, int imageX, int imageY
     const auto axes = displayAxes(state.normal);
     const auto primaryFixedAxis = request.axis == axes[0] ? axes[1] : axes[0];
     const auto generation = m_generation;
+    // Renew the line-plot stop source only if a dataset switch or window close
+    // stopped it, so concurrent line requests can still complete and stack
+    // their curves in the shared window.
+    if (m_linePlotStopSource.stop_requested()) {
+        m_linePlotStopSource = std::stop_source{};
+    }
+    const auto cancellation = m_linePlotStopSource.get_token();
     ++m_activeRequests;
     statusBar()->showMessage(tr("Loading line plot for %1...").arg(
         QString::fromStdString(fieldName)));
@@ -1542,12 +1549,12 @@ void MainWindow::linePlotRequested(PlaneViewState& state, int imageX, int imageY
 
     auto* watcher = new QFutureWatcher<LineQueryResult>(this);
     connect(watcher, &QFutureWatcher<LineQueryResult>::finished, this,
-        [this, watcher, dataset, generation, request, fieldName, dimension,
-            primaryFixedAxis, maximumLevel, composition] {
+        [this, watcher, dataset, generation, cancellation, request, fieldName,
+            dimension, primaryFixedAxis, maximumLevel, composition] {
             --m_activeRequests;
             try {
                 auto result = watcher->result();
-                if (generation != m_generation) {
+                if (generation != m_generation || cancellation.stop_requested()) {
                     ++m_staleResults;
                 } else {
                     appendLinePlotCurve(result.line, fieldName, dimension,
@@ -1565,7 +1572,7 @@ void MainWindow::linePlotRequested(PlaneViewState& state, int imageX, int imageY
                         .arg(QString::fromStdString(fieldName)));
                 }
             } catch (const std::exception& error) {
-                if (generation == m_generation) {
+                if (generation == m_generation && !cancellation.stop_requested()) {
                     statusBar()->showMessage(tr("Line plot request failed"));
                     QMessageBox::critical(this, tr("Cannot load line plot"),
                         exceptionMessage(error));
@@ -1577,7 +1584,9 @@ void MainWindow::linePlotRequested(PlaneViewState& state, int imageX, int imageY
             watcher->deleteLater();
         });
     watcher->setFuture(QtConcurrent::run(
-        [dataset, request] { return LineQuery(*dataset).execute(request); }));
+        [dataset, request, cancellation] {
+            return LineQuery(*dataset).execute(request, cancellation);
+        }));
 }
 
 void MainWindow::sliceMoveRequested(PlaneViewState& state, int imageX, int imageY,
@@ -1625,6 +1634,9 @@ void MainWindow::appendLinePlotCurve(const LineResult& line,
             if (m_linePlotWindow == window) {
                 m_linePlotWindow = nullptr;
             }
+            // Stop in-flight line queries so a late result cannot reopen the
+            // window the user just closed.
+            m_linePlotStopSource.request_stop();
         });
         m_linePlotWindow = window;
     }
@@ -2020,6 +2032,7 @@ void MainWindow::openDataset(const std::filesystem::path& path, bool metadataOnl
         state->cachedContourCount = 0;
     }
     m_initialStopSource.request_stop();
+    m_linePlotStopSource.request_stop();
     m_pendingAllViews = false;
     m_pendingViews.clear();
     m_sliceDebounce->stop();
@@ -2126,6 +2139,7 @@ void MainWindow::requestInitialSlice(
         m_slicePosition3d[axis] = lower + 0.5 * (upper - lower);
     }
     m_initialStopSource.request_stop();
+    m_linePlotStopSource.request_stop();
     m_initialStopSource = std::stop_source{};
     const auto cancellation = m_initialStopSource.get_token();
     // The initial open uses default slice state: field 0, finest available,
@@ -2156,6 +2170,10 @@ void MainWindow::requestInitialSlice(
                 if (generation == m_generation) {
                     m_dataset = result.dataset;
                     configureSliceControls();
+                    if (result.displays.size() != views.size()) {
+                        throw std::runtime_error(
+                            "initial slice count does not match the view set");
+                    }
                     for (std::size_t index = 0; index < views.size(); ++index) {
                         if (views[index]->sliceGeneration
                             != viewGenerations[index]) {
@@ -2819,6 +2837,7 @@ void MainWindow::goToSequenceFrame(int index)
         ++state->sliceGeneration;
     }
     m_initialStopSource.request_stop();
+    m_linePlotStopSource.request_stop();
     m_pendingAllViews = false;
     m_pendingViews.clear();
     m_sliceDebounce->stop();

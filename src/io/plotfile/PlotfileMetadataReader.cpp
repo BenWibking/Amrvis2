@@ -230,13 +230,12 @@ detail::VisMfIndex detail::readVisMfIndex(
     }
 
     if (index.version >= 2) {
-        input.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-        std::string descriptor;
-        std::getline(input, descriptor);
-        index.realDescriptor = trim(std::move(descriptor));
-        if (index.realDescriptor.empty()) {
-            throw MetadataReadError("VisMF header is missing its RealDescriptor");
-        }
+        // AMReX's VisMF serializer writes a blank separator line before the
+        // RealDescriptor in header versions 2 and 3 (a trailing '\n' after
+        // the FabOnDisk list and after each per-block min/max matrix).
+        // readNonEmptyLine skips blank lines, mirroring how AMReX reads the
+        // descriptor with operator>>. Version 4 emits no separator.
+        index.realDescriptor = readNonEmptyLine(input, "VisMF RealDescriptor");
     }
     return index;
 }

@@ -312,6 +312,9 @@ private:
     QLabel* m_probeLabel = nullptr;
     ColorBarWidget* m_colorBar = nullptr;
     LinePlotWindow* m_linePlotWindow = nullptr;
+    // Cancels in-flight line-plot queries on dataset switch or window close so
+    // a late result neither reopens a closed window nor wastes I/O.
+    std::stop_source m_linePlotStopSource;
     DatasetWindow* m_datasetWindow = nullptr;
     QComboBox* m_fieldSelector = nullptr;
     QComboBox* m_levelSelector = nullptr;

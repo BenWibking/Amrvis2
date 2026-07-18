@@ -141,10 +141,13 @@ public:
         if (bytes > m_state->metrics.budgetBytes) {
             throw CacheBudgetExceeded("cache entry exceeds the entire byte budget");
         }
-        evictFor(*m_state, bytes);
-        if (m_state->metrics.residentBytes + bytes > m_state->metrics.budgetBytes) {
+        // If pinned entries alone already leave no room, the insert cannot
+        // succeed regardless of eviction; fail before discarding unpinned data
+        // that the doomed insert would otherwise evict for nothing.
+        if (m_state->metrics.pinnedBytes + bytes > m_state->metrics.budgetBytes) {
             throw CacheBudgetExceeded("cache budget is occupied by pinned entries");
         }
+        evictFor(*m_state, bytes);
 
         m_state->lru.push_front(key);
         Entry entry{std::move(value), bytes, 1, m_state->lru.begin()};

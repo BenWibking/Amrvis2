@@ -25,6 +25,10 @@ add_executable(test_vector_glyphs unit/test_vector_glyphs.cpp)
 target_link_libraries(test_vector_glyphs PRIVATE Amrvis::render2d Amrvis::warnings)
 add_test(NAME vector_glyphs COMMAND test_vector_glyphs)
 
+add_executable(test_vismf_index unit/test_vismf_index.cpp)
+target_link_libraries(test_vismf_index PRIVATE Amrvis::io Amrvis::warnings)
+add_test(NAME vismf_index COMMAND test_vismf_index)
+
 add_executable(test_plotfile_metadata integration/test_plotfile_metadata.cpp)
 target_link_libraries(test_plotfile_metadata PRIVATE Amrvis::io Amrvis::warnings)
 add_test(
