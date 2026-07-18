@@ -1,5 +1,6 @@
 #include "LinePlotWindow.hpp"
 #include "NumberFormat.hpp"
+#include "Theme.hpp"
 
 #include <QFile>
 #include <QFileDialog>
@@ -146,7 +147,7 @@ std::optional<QRectF> LinePlotWidget::displayedRange() const
 void LinePlotWidget::paintEvent(QPaintEvent* /*event*/)
 {
     QPainter painter(this);
-    painter.fillRect(rect(), Qt::black);
+    painter.fillRect(rect(), viewportBackground());
     const auto range = displayedRange();
     if (!range.has_value()) {
         painter.setPen(Qt::white);

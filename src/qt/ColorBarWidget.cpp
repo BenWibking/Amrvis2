@@ -1,5 +1,6 @@
 #include "ColorBarWidget.hpp"
 #include "NumberFormat.hpp"
+#include "Theme.hpp"
 
 #include <amrvis/render2d/Palette.hpp>
 
@@ -64,7 +65,7 @@ void ColorBarWidget::paintEvent(QPaintEvent* event)
 {
     QWidget::paintEvent(event);
     QPainter painter(this);
-    painter.fillRect(rect(), Qt::black);
+    painter.fillRect(rect(), viewportBackground());
     painter.setPen(Qt::white);
 
     if (!m_hasRange) {

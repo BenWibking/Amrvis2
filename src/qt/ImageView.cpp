@@ -1,5 +1,7 @@
 #include "ImageView.hpp"
 
+#include "Theme.hpp"
+
 #include <QGraphicsLineItem>
 #include <QGraphicsPathItem>
 #include <QGraphicsPixmapItem>
@@ -44,7 +46,7 @@ void ImageView::setImage(const QImage& image)
     m_image = image;
     m_item = m_scene->addPixmap(QPixmap::fromImage(m_image));
     m_scene->setSceneRect(m_item->boundingRect());
-    setBackgroundBrush(Qt::black);
+    setBackgroundBrush(viewportBackground());
     m_fitOnResize = true;
     fitImage();
     applyCrosshairs();

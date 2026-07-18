@@ -1,5 +1,7 @@
 #include "IsoWidget.hpp"
 
+#include "Theme.hpp"
+
 #include <amrvis/render2d/Palette.hpp>
 
 #include <QPainter>
@@ -64,7 +66,7 @@ void IsoWidget::setColorPalette(const Palette* palette)
 void IsoWidget::paintEvent(QPaintEvent* event)
 {
     QPainter painter(this);
-    painter.fillRect(event->rect(), Qt::black);
+    painter.fillRect(event->rect(), viewportBackground());
     if (!m_hasGeometry) {
         painter.setPen(QColor(0x88, 0x88, 0x88));
         painter.drawText(rect(), Qt::AlignCenter, tr("3-D overview"));

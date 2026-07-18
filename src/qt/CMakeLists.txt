@@ -19,6 +19,7 @@ add_executable(amrvis_qt
     NumberFormat.hpp
     SetContoursDialog.cpp
     SetContoursDialog.hpp
+    Theme.hpp
     main.cpp
 )
 set_target_properties(amrvis_qt PROPERTIES AUTOMOC ON)
