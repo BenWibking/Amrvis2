@@ -211,7 +211,6 @@ private:
     void exportImage();
     void exportSliceData();
     void createMenus();
-    void rebuildVariableMenu();
     void rebuildLevelMenu();
     void syncMenuChecks();
     void syncPaletteChecks();
@@ -340,9 +339,7 @@ private:
     QDockWidget* m_diagnosticsDock = nullptr;
     QDockWidget* m_colorBarDock = nullptr;
     QDockWidget* m_animationDock = nullptr;
-    QMenu* m_variableMenu = nullptr;
     QMenu* m_levelMenu = nullptr;
-    QActionGroup* m_variableGroup = nullptr;
     QActionGroup* m_levelGroup = nullptr;
     QActionGroup* m_paletteGroup = nullptr;
     QAction* m_boxesAction = nullptr;

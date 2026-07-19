@@ -921,7 +921,6 @@ void MainWindow::createMenus()
     fileMenu->addAction(openSequenceAction);
     fileMenu->addAction(openSequenceNewWindowAction);
     fileMenu->addAction(openStandaloneAction);
-    fileMenu->addMenu(paletteMenu);
     fileMenu->addSeparator();
     fileMenu->addAction(exportAction);
     fileMenu->addAction(exportDataAction);
@@ -988,6 +987,7 @@ void MainWindow::createMenus()
     viewMenu->addMenu(scaleMenu);
     viewMenu->addMenu(m_levelMenu);
     viewMenu->addAction(m_boxesAction);
+    viewMenu->addMenu(paletteMenu);
     viewMenu->addSeparator();
     viewMenu->addAction(m_contoursAction);
     viewMenu->addAction(m_datasetAction);
@@ -1001,10 +1001,6 @@ void MainWindow::createMenus()
     viewMenu->addAction(m_diagnosticsDock->toggleViewAction());
     viewMenu->addAction(m_animationDock->toggleViewAction());
 
-    m_variableMenu = menuBar()->addMenu(tr("&Variable"));
-    m_variableGroup = new QActionGroup(this);
-    m_variableMenu->setEnabled(false);
-
     auto* helpMenu = menuBar()->addMenu(tr("&Help"));
     auto* referenceAction = new QAction(tr("&Keyboard && Mouse..."), this);
     connect(referenceAction, &QAction::triggered,
@@ -1014,26 +1010,6 @@ void MainWindow::createMenus()
     helpMenu->addAction(referenceAction);
     helpMenu->addSeparator();
     helpMenu->addAction(aboutAction);
-}
-
-void MainWindow::rebuildVariableMenu()
-{
-    m_variableMenu->clear();
-    if (!m_dataset) {
-        return;
-    }
-    const auto& fields = m_dataset->metadata().fields;
-    for (std::size_t field = 0; field < fields.size(); ++field) {
-        auto* action = new QAction(QString::fromStdString(fields[field].name),
-            m_variableMenu);
-        action->setCheckable(true);
-        action->setActionGroup(m_variableGroup);
-        const auto index = static_cast<int>(field);
-        connect(action, &QAction::triggered, this,
-            [this, index] { m_fieldSelector->setCurrentIndex(index); });
-        m_variableMenu->addAction(action);
-    }
-    syncMenuChecks();
 }
 
 void MainWindow::rebuildLevelMenu()
@@ -1067,11 +1043,6 @@ void MainWindow::rebuildLevelMenu()
 
 void MainWindow::syncMenuChecks()
 {
-    const auto fieldIndex = m_fieldSelector->currentIndex();
-    const auto fieldActions = m_variableMenu->actions();
-    for (int index = 0; index < fieldActions.size(); ++index) {
-        fieldActions[index]->setChecked(index == fieldIndex);
-    }
     const auto levelIndex = m_levelSelector->currentIndex();
     const auto levelActions = m_levelMenu->actions();
     for (int index = 0; index < levelActions.size(); ++index) {
@@ -2232,7 +2203,6 @@ void MainWindow::openDataset(const std::filesystem::path& path, bool metadataOnl
     m_rangeMaximum->setEnabled(false);
     m_slicePositionControls->setVisible(false);
     m_animationPanel->setSweepVisible(false);
-    m_variableMenu->setEnabled(false);
     m_levelMenu->setEnabled(false);
     m_contoursAction->setEnabled(false);
     m_datasetAction->setEnabled(false);
@@ -2410,9 +2380,7 @@ void MainWindow::configureSliceControls()
         m_rangeMode->currentData().toInt()) == RangeMode::User;
     m_rangeMinimum->setEnabled(userRange);
     m_rangeMaximum->setEnabled(userRange);
-    rebuildVariableMenu();
     rebuildLevelMenu();
-    m_variableMenu->setEnabled(true);
     m_levelMenu->setEnabled(true);
     m_contoursAction->setEnabled(true);
     m_datasetAction->setEnabled(true);
@@ -3222,9 +3190,7 @@ void MainWindow::configureSequenceControls(bool defaultPositions)
         m_rangeMode->currentData().toInt()) == RangeMode::User;
     m_rangeMinimum->setEnabled(userRange);
     m_rangeMaximum->setEnabled(userRange);
-    rebuildVariableMenu();
     rebuildLevelMenu();
-    m_variableMenu->setEnabled(true);
     m_levelMenu->setEnabled(true);
     m_contoursAction->setEnabled(true);
     m_datasetAction->setEnabled(true);
