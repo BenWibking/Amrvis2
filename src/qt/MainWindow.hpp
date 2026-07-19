@@ -215,6 +215,7 @@ private:
     void rebuildLevelMenu();
     void syncMenuChecks();
     void syncPaletteChecks();
+    void syncPaletteSelector();
     void selectBuiltinPalette(int index);
     void loadPaletteFile();
     void applyPalette(const Palette& palette, std::optional<int> builtinIndex,
@@ -335,8 +336,8 @@ private:
     QComboBox* m_fieldSelector = nullptr;
     QComboBox* m_levelSelector = nullptr;
     QComboBox* m_rangeMode = nullptr;
+    QComboBox* m_paletteSelector = nullptr;
     QCheckBox* m_logarithmic = nullptr;
-    QCheckBox* m_gridBoxes = nullptr;
     QDoubleSpinBox* m_rangeMinimum = nullptr;
     QDoubleSpinBox* m_rangeMaximum = nullptr;
     // Per-field range state for the current dataset. m_trackedField is the

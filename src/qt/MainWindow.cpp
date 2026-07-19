@@ -29,6 +29,7 @@
 #include <QException>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFontMetrics>
 #include <QFutureWatcher>
 #include <QGridLayout>
 #include <QHeaderView>
@@ -40,13 +41,17 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QPainter>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QStringList>
+#include <QStyleOptionComboBox>
+#include <QStyledItemDelegate>
 #include <QTimer>
 #include <QToolBar>
 #include <QTreeView>
@@ -95,6 +100,67 @@ constexpr std::array<BuiltinPalette, 7> builtinPalettes{
 // Menu labels and QSettings keys; kept in sync with builtinPaletteName().
 constexpr std::array<const char*, 7> builtinPaletteNames{
     "rainbow", "turbo", "viridis", "plasma", "parula", "coolwarm", "blackbody"};
+
+// Marks the active row in the palette dropdown with a bullet. The bullet lives
+// in a reserved left column that every row's sizeHint accounts for, so names
+// align and the indented text is never clipped. Installed only on the combo's
+// popup view, so the closed combo still shows the clean palette name.
+class CurrentRowBulletDelegate : public QStyledItemDelegate {
+public:
+    explicit CurrentRowBulletDelegate(QComboBox* combo, QObject* parent)
+        : QStyledItemDelegate(parent), m_combo(combo) {}
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+        const QModelIndex& index) const override
+    {
+        QStyleOptionViewItem opt = option;
+        initStyleOption(&opt, index);
+        auto* const style = opt.widget != nullptr ? opt.widget->style() : nullptr;
+
+        // Full-width selection background, then the name indented past the
+        // marker column so all rows line up at the same x.
+        if (style != nullptr) {
+            style->drawPrimitive(
+                QStyle::PE_PanelItemViewItem, &opt, painter, opt.widget);
+        }
+        opt.rect.adjust(kMarkerColumn, 0, 0, 0);
+        if (style != nullptr) {
+            style->drawControl(
+                QStyle::CE_ItemViewItem, &opt, painter, opt.widget);
+        }
+
+        if (m_combo != nullptr && index.row() == m_combo->currentIndex()) {
+            const QPalette::ColorRole role =
+                (opt.state & QStyle::State_Selected) != 0
+                    ? QPalette::HighlightedText
+                    : QPalette::WindowText;
+            painter->save();
+            painter->setRenderHint(QPainter::Antialiasing, true);
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(opt.palette.brush(role));
+            const QPointF center(option.rect.left() + kMarkerColumn / 2.0,
+                option.rect.center().y());
+            painter->drawEllipse(center, 2.5, 2.5);
+            painter->restore();
+        }
+    }
+
+    QSize sizeHint(const QStyleOptionViewItem& option,
+        const QModelIndex& index) const override
+    {
+        QSize size = QStyledItemDelegate::sizeHint(option, index);
+        // Reserve the marker column horizontally and add vertical padding so
+        // the names have breathing room; keeps the closed combo unaffected.
+        size.setWidth(size.width() + kMarkerColumn);
+        size.setHeight(size.height() + kRowVerticalPadding);
+        return size;
+    }
+
+private:
+    static constexpr int kMarkerColumn = 16;
+    static constexpr int kRowVerticalPadding = 6;
+    QPointer<QComboBox> m_combo;
+};
 
 QSettings makeSettings()
 {
@@ -694,9 +760,45 @@ MainWindow::MainWindow(QWidget* parent)
     m_rangeMaximum->setPrefix(tr("max "));
     m_rangeMaximum->setValue(1.0);
     m_logarithmic = new QCheckBox(tr("Log"), rangeToolbar);
+    m_logarithmic->setLayoutDirection(Qt::RightToLeft);
     rangeToolbar->addWidget(m_logarithmic);
-    m_gridBoxes = new QCheckBox(tr("Grid boxes"), rangeToolbar);
-    rangeToolbar->addWidget(m_gridBoxes);
+    auto* paletteSpacer = new QWidget(rangeToolbar);
+    paletteSpacer->setFixedWidth(12);
+    rangeToolbar->addWidget(paletteSpacer);
+    rangeToolbar->addWidget(new QLabel(tr("Palette:"), rangeToolbar));
+    m_paletteSelector = new QComboBox(rangeToolbar);
+    const QFontMetrics paletteFm(m_paletteSelector->font());
+    int widestBuiltin = 0;
+    for (std::size_t index = 0; index < builtinPalettes.size(); ++index) {
+        const auto raw = builtinPaletteName(builtinPalettes[index]);
+        auto label = QString::fromLatin1(raw.data(),
+            static_cast<qsizetype>(raw.size()));
+        if (!label.isEmpty()) {
+            label[0] = label[0].toUpper();
+        }
+        widestBuiltin = std::max(widestBuiltin, paletteFm.horizontalAdvance(label));
+        m_paletteSelector->addItem(label, static_cast<int>(index));
+    }
+    // Size the closed combo to exactly fit the longest builtin name (the popup
+    // expands independently, so the "Load Palette File..." / custom entries are
+    // never truncated there). Any custom entry shows elided when closed.
+    QStyleOptionComboBox comboBoxOption;
+    comboBoxOption.initFrom(m_paletteSelector);
+    const QSize content(widestBuiltin + 4, paletteFm.height());
+    m_paletteSelector->setFixedWidth(m_paletteSelector->style()->sizeFromContents(
+        QStyle::CT_ComboBox, &comboBoxOption, content, m_paletteSelector).width());
+    m_paletteSelector->view()->setItemDelegate(new CurrentRowBulletDelegate(
+        m_paletteSelector, m_paletteSelector->view()));
+    connect(m_paletteSelector, qOverload<int>(&QComboBox::currentIndexChanged),
+        this, [this](int) {
+            const auto selection = m_paletteSelector->currentData().toInt();
+            if (selection >= 0) {
+                selectBuiltinPalette(selection);
+            }
+            // selection == -2 is the transient "Custom: <file>" entry added by
+            // syncPaletteSelector(); selecting it is a no-op.
+        });
+    rangeToolbar->addWidget(m_paletteSelector);
 
     m_sliceDebounce = new QTimer(this);
     m_sliceDebounce->setSingleShot(true);
@@ -744,13 +846,10 @@ MainWindow::MainWindow(QWidget* parent)
         });
     connect(m_logarithmic, &QCheckBox::toggled,
         this, [this](bool) { scheduleSliceRequest(); });
-    connect(m_gridBoxes, &QCheckBox::toggled,
-        this, [this](bool) { updateGridBoxes(); });
     m_fieldSelector->setEnabled(false);
     m_levelSelector->setEnabled(false);
     m_rangeMode->setEnabled(false);
     m_logarithmic->setEnabled(false);
-    m_gridBoxes->setEnabled(false);
 
     m_metadataDock = new QDockWidget(tr("Dataset Metadata"), this);
     m_metadataTree = new QTreeWidget(m_metadataDock);
@@ -809,8 +908,6 @@ MainWindow::MainWindow(QWidget* parent)
         this, [this](int) { syncMenuChecks(); });
     connect(m_levelSelector, qOverload<int>(&QComboBox::currentIndexChanged),
         this, [this](int) { syncMenuChecks(); });
-    connect(m_gridBoxes, &QCheckBox::toggled,
-        this, [this](bool) { saveSettings(); });
     connect(m_rangeMode, qOverload<int>(&QComboBox::currentIndexChanged),
         this, [this](int) { saveSettings(); });
     connect(m_logarithmic, &QCheckBox::toggled,
@@ -994,12 +1091,12 @@ void MainWindow::createMenus()
 
     m_boxesAction = new QAction(tr("&Boxes"), this);
     m_boxesAction->setCheckable(true);
-    m_boxesAction->setShortcut(QKeySequence(Qt::Key_B));
-    connect(m_boxesAction, &QAction::toggled, this, [this](bool checked) {
-        m_gridBoxes->setChecked(checked);
-    });
-    connect(m_gridBoxes, &QCheckBox::toggled, this, [this](bool checked) {
-        m_boxesAction->setChecked(checked);
+    m_boxesAction->setShortcuts(
+        {QKeySequence(Qt::Key_B), QKeySequence(Qt::SHIFT | Qt::Key_B)});
+    m_boxesAction->setEnabled(false);
+    connect(m_boxesAction, &QAction::toggled, this, [this](bool) {
+        updateGridBoxes();
+        saveSettings();
     });
 
     m_contoursAction = new QAction(tr("&Contours..."), this);
@@ -1094,6 +1191,28 @@ void MainWindow::syncPaletteChecks()
     }
 }
 
+void MainWindow::syncPaletteSelector()
+{
+    const QSignalBlocker blocker(m_paletteSelector);
+    // Drop any stale "custom palette file" entry before reconciling.
+    const int custom = m_paletteSelector->findData(-2);
+    if (custom >= 0) {
+        m_paletteSelector->removeItem(custom);
+    }
+    if (m_paletteFromFile) {
+        const auto label =
+            tr("Custom: %1").arg(QFileInfo(m_paletteFilePath).fileName());
+        // Insert just after the builtins (and before the separator) so the
+        // "Load Palette File..." entry stays anchored at the bottom.
+        m_paletteSelector->insertItem(
+            static_cast<int>(builtinPalettes.size()), label, -2);
+        m_paletteSelector->setCurrentIndex(m_paletteSelector->findData(-2));
+    } else {
+        m_paletteSelector->setCurrentIndex(
+            m_paletteSelector->findData(m_builtinIndex));
+    }
+}
+
 void MainWindow::selectBuiltinPalette(int index)
 {
     if (index < 0 || index >= static_cast<int>(builtinPalettes.size())) {
@@ -1137,6 +1256,7 @@ void MainWindow::applyPalette(const Palette& palette, std::optional<int> builtin
     }
     m_colorBar->setPalette(&m_palette);
     syncPaletteChecks();
+    syncPaletteSelector();
     saveSettings();
     scheduleSliceRequest();
     updateGridBoxes();
@@ -1858,12 +1978,11 @@ void MainWindow::restoreSettings()
     }
     m_colorBar->setPalette(&m_palette);
     syncPaletteChecks();
+    syncPaletteSelector();
 
     {
-        const QSignalBlocker boxesBlocker(m_gridBoxes);
         const QSignalBlocker actionBlocker(m_boxesAction);
         const auto boxes = settings.value(QStringLiteral("view/boxes"), false).toBool();
-        m_gridBoxes->setChecked(boxes);
         m_boxesAction->setChecked(boxes);
     }
     {
@@ -1899,7 +2018,7 @@ void MainWindow::restoreSettings()
 void MainWindow::saveSettings()
 {
     auto settings = makeSettings();
-    settings.setValue(QStringLiteral("view/boxes"), m_gridBoxes->isChecked());
+    settings.setValue(QStringLiteral("view/boxes"), m_boxesAction->isChecked());
     settings.setValue(QStringLiteral("range/logarithmic"), m_logarithmic->isChecked());
     settings.setValue(QStringLiteral("palette/fromFile"), m_paletteFromFile);
     settings.setValue(QStringLiteral("palette/filePath"), m_paletteFilePath);
@@ -2223,7 +2342,7 @@ void MainWindow::openDataset(const std::filesystem::path& path, bool metadataOnl
     m_levelSelector->setEnabled(false);
     m_rangeMode->setEnabled(false);
     m_logarithmic->setEnabled(false);
-    m_gridBoxes->setEnabled(false);
+    m_boxesAction->setEnabled(false);
     m_rangeMinimum->setEnabled(false);
     m_rangeMaximum->setEnabled(false);
     m_slicePositionControls->setVisible(false);
@@ -2400,7 +2519,7 @@ void MainWindow::configureSliceControls()
     m_levelSelector->setEnabled(true);
     m_rangeMode->setEnabled(true);
     m_logarithmic->setEnabled(true);
-    m_gridBoxes->setEnabled(true);
+    m_boxesAction->setEnabled(true);
     const auto userRange = static_cast<RangeMode>(
         m_rangeMode->currentData().toInt()) == RangeMode::User;
     m_rangeMinimum->setEnabled(userRange);
@@ -2655,7 +2774,7 @@ void MainWindow::requestSlice(PlaneViewState& state, bool rasterDirty)
 void MainWindow::updateGridBoxes(PlaneViewState& state)
 {
     std::vector<GridBoxOverlay> overlays;
-    if (!m_gridBoxes->isChecked() || !m_dataset || !state.view->hasImage()
+    if (!m_boxesAction->isChecked() || !m_dataset || !state.view->hasImage()
         || state.plane.width <= 0 || state.plane.height <= 0) {
         state.view->setGridBoxes(overlays);
         return;
@@ -3220,7 +3339,7 @@ void MainWindow::configureSequenceControls(bool defaultPositions)
     m_levelSelector->setEnabled(true);
     m_rangeMode->setEnabled(true);
     m_logarithmic->setEnabled(true);
-    m_gridBoxes->setEnabled(true);
+    m_boxesAction->setEnabled(true);
     const auto userRange = static_cast<RangeMode>(
         m_rangeMode->currentData().toInt()) == RangeMode::User;
     m_rangeMinimum->setEnabled(userRange);
