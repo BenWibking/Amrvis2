@@ -204,11 +204,11 @@ private:
         InitialSliceResult result;
     };
 
-    void chooseDataset(bool newWindow = false);
-    void chooseStandaloneDataset();
-    // A fresh independent top-level window (WA_DeleteOnClose) for "open in new
-    // window"; it shares no view/cache state with this one.
-    [[nodiscard]] MainWindow* createNewWindow();
+    void chooseDataset();
+    void chooseStandaloneDataset(const QString& caption);
+    // A fresh independent top-level window (WA_DeleteOnClose) for the
+    // "Open New Window" menu action; it shares no view/cache state with this one.
+    MainWindow* createNewWindow();
     void exportImage();
     void exportSliceData();
     void createMenus();
@@ -302,7 +302,7 @@ private:
         Sweep,
         Sequence
     };
-    void choosePlotfileSequence(bool newWindow = false);
+    void choosePlotfileSequence();
     void closeSequence();
     void goToSequenceFrame(int index);
     void toggleSequencePlayback();

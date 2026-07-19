@@ -903,27 +903,25 @@ std::array<int, 2> MainWindow::displayAxes(int normal) const
 
 void MainWindow::createMenus()
 {
+    auto* newWindowAction = new QAction(tr("Open &New Window"), this);
+    newWindowAction->setShortcut(QKeySequence::New);
+    connect(newWindowAction, &QAction::triggered, this, [this] { createNewWindow(); });
+
     auto* openAction = new QAction(tr("&Open Plotfile Directory..."), this);
     openAction->setShortcut(QKeySequence::Open);
     connect(openAction, &QAction::triggered, this, [this] { chooseDataset(); });
-
-    auto* openNewWindowAction = new QAction(
-        tr("Open Plotfile Directory in &New Window..."), this);
-    connect(openNewWindowAction, &QAction::triggered,
-        this, [this] { chooseDataset(true); });
 
     auto* openSequenceAction = new QAction(tr("Open Plotfile &Sequence..."), this);
     connect(openSequenceAction, &QAction::triggered, this,
         [this] { choosePlotfileSequence(); });
 
-    auto* openSequenceNewWindowAction = new QAction(
-        tr("Open Plotfile Sequence in Ne&w Window..."), this);
-    connect(openSequenceNewWindowAction, &QAction::triggered,
-        this, [this] { choosePlotfileSequence(true); });
+    auto* openFabAction = new QAction(tr("Open &FAB..."), this);
+    connect(openFabAction, &QAction::triggered, this,
+        [this] { chooseStandaloneDataset(tr("Open AMReX FAB")); });
 
-    auto* openStandaloneAction = new QAction(tr("Open &Standalone FAB/MultiFab..."), this);
-    connect(openStandaloneAction, &QAction::triggered,
-        this, [this] { chooseStandaloneDataset(); });
+    auto* openMultiFabAction = new QAction(tr("Open &MultiFab..."), this);
+    connect(openMultiFabAction, &QAction::triggered, this,
+        [this] { chooseStandaloneDataset(tr("Open AMReX MultiFab header")); });
 
     m_paletteGroup = new QActionGroup(this);
     auto* paletteMenu = new QMenu(tr("&Palette"), this);
@@ -953,11 +951,12 @@ void MainWindow::createMenus()
     connect(quitAction, &QAction::triggered, this, &QWidget::close);
 
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
+    fileMenu->addAction(newWindowAction);
+    fileMenu->addSeparator();
     fileMenu->addAction(openAction);
-    fileMenu->addAction(openNewWindowAction);
     fileMenu->addAction(openSequenceAction);
-    fileMenu->addAction(openSequenceNewWindowAction);
-    fileMenu->addAction(openStandaloneAction);
+    fileMenu->addAction(openFabAction);
+    fileMenu->addAction(openMultiFabAction);
     fileMenu->addSeparator();
     fileMenu->addAction(exportAction);
     fileMenu->addAction(exportDataAction);
@@ -1939,7 +1938,7 @@ MainWindow* MainWindow::createNewWindow()
     return window;
 }
 
-void MainWindow::chooseDataset(bool newWindow)
+void MainWindow::chooseDataset()
 {
     const auto settings = makeSettings();
     const auto directory = QFileDialog::getExistingDirectory(
@@ -1948,18 +1947,14 @@ void MainWindow::chooseDataset(bool newWindow)
     if (directory.isEmpty()) {
         return;
     }
-    if (newWindow) {
-        createNewWindow()->openDataset(directory.toStdString());
-    } else {
-        openDataset(directory.toStdString());
-    }
+    openDataset(directory.toStdString());
 }
 
-void MainWindow::chooseStandaloneDataset()
+void MainWindow::chooseStandaloneDataset(const QString& caption)
 {
     const auto settings = makeSettings();
     const auto filename = QFileDialog::getOpenFileName(this,
-        tr("Open standalone AMReX FAB or MultiFab header"),
+        caption,
         settings.value(QStringLiteral("lastOpenDirectory")).toString(),
         tr("AMReX data (*)"));
     if (!filename.isEmpty()) {
@@ -2893,7 +2888,7 @@ void MainWindow::showSlice(PlaneViewState& state, const SliceDisplayResult& disp
     statusBar()->clearMessage();
 }
 
-void MainWindow::choosePlotfileSequence(bool newWindow)
+void MainWindow::choosePlotfileSequence()
 {
     const auto settings = makeSettings();
     // Select the plotfile directories directly with click / Ctrl-click /
@@ -2928,11 +2923,7 @@ void MainWindow::choosePlotfileSequence(bool newWindow)
     auto writableSettings = makeSettings();
     writableSettings.setValue(QStringLiteral("lastOpenDirectory"),
         QFileInfo(selected.first()).absolutePath());
-    if (newWindow) {
-        createNewWindow()->openSequence(frames);
-    } else {
-        openSequence(frames);
-    }
+    openSequence(frames);
 }
 
 void MainWindow::openSequence(const std::vector<std::filesystem::path>& frames)
