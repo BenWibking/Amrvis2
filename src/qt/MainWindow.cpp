@@ -85,11 +85,13 @@ constexpr std::uint64_t initialCacheBudget = 256ULL * 1024ULL * 1024ULL;
 // so they never collide with the ids openDataset derives from m_generation.
 constexpr std::uint64_t sequenceDatasetIdBase = 0x4000000000000000ULL;
 
-constexpr std::array<BuiltinPalette, 5> builtinPalettes{
-    BuiltinPalette::Rainbow, BuiltinPalette::RedWhiteBlue, BuiltinPalette::Viridis,
-    BuiltinPalette::Vort, BuiltinPalette::BlueFlame};
-constexpr std::array<const char*, 5> builtinPaletteNames{
-    "Rainbow", "RedWhiteBlue", "Viridis", "Vort", "BlueFlame"};
+constexpr std::array<BuiltinPalette, 7> builtinPalettes{
+    BuiltinPalette::Rainbow, BuiltinPalette::Turbo, BuiltinPalette::Viridis,
+    BuiltinPalette::Plasma, BuiltinPalette::Parula, BuiltinPalette::Coolwarm,
+    BuiltinPalette::Blackbody};
+// Menu labels and QSettings keys; kept in sync with builtinPaletteName().
+constexpr std::array<const char*, 7> builtinPaletteNames{
+    "rainbow", "turbo", "viridis", "plasma", "parula", "coolwarm", "blackbody"};
 
 QSettings makeSettings()
 {
@@ -1834,7 +1836,7 @@ void MainWindow::restoreSettings()
     }
     if (!paletteRestored) {
         const auto name = settings.value(QStringLiteral("palette/builtin"),
-            QStringLiteral("Rainbow")).toString();
+            QStringLiteral("rainbow")).toString();
         m_builtinIndex = 0;
         for (std::size_t index = 0; index < builtinPaletteNames.size(); ++index) {
             if (name == QLatin1String(builtinPaletteNames[index])) {

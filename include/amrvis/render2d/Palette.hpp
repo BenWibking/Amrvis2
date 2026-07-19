@@ -66,13 +66,17 @@ private:
     std::array<Rgb, slotCount> slots_{};
 };
 
-enum class BuiltinPalette { Rainbow, RedWhiteBlue, Viridis, Vort, BlueFlame };
+enum class BuiltinPalette { Rainbow, Turbo, Viridis, Plasma, Parula, Coolwarm, Blackbody };
 
 // Compiled-in copies of the palette files shipped under palettes/; Rainbow
 // is byte-identical to the legacy default `Palette` file and is the default
-// for scalar rendering.
+// for scalar rendering. The rest are curated from the popular visualization
+// packages: turbo, viridis, plasma (matplotlib), parula (MATLAB), coolwarm
+// (the Moreland diverging map shared by ParaView/VisIt), and blackbody (a
+// black-body radiation thermal ramp).
 [[nodiscard]] const Palette& builtinPalette(BuiltinPalette palette);
-// The shipped palette file name, e.g. "rainbow.pal".
+// The palette's menu label / settings key, without a file extension, e.g.
+// "rainbow".
 [[nodiscard]] std::string_view builtinPaletteName(BuiltinPalette palette) noexcept;
 
 } // namespace amrvis

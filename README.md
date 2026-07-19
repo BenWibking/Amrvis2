@@ -44,7 +44,10 @@ VTK configuration and the bounded volume-query contract are implemented.
 - Field and AMR level selection (finest available or one exact level)
 - Data ranges from the visible region, a level, or the whole file, plus
   user-defined and logarithmic ranges
-- Palette files (`.pal`), with the default colormap built in
+- Built-in palettes: rainbow (the legacy Amrvis default), turbo, viridis,
+  plasma (matplotlib), parula (MATLAB), coolwarm (the Moreland diverging map
+  shared by ParaView/VisIt), and blackbody (a black-body radiation thermal
+  ramp); custom palette files (`.pal`) can also be loaded
 - Color bar, AMR grid box overlays, and a cursor probe readout
 - Rubber-band zoom into a subregion
 - Contour lines and vector glyph overlays
