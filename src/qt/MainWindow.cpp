@@ -137,7 +137,7 @@ QString exceptionMessage(const std::exception& error)
     return QString::fromUtf8(error.what());
 }
 
-std::pair<double, double> finiteRange(const ScalarPlane& plane, bool positiveOnly)
+std::pair<double, double> finiteRange(const ScalarPlane& plane)
 {
     auto minimum = std::numeric_limits<double>::infinity();
     auto maximum = -std::numeric_limits<double>::infinity();
@@ -146,7 +146,7 @@ std::pair<double, double> finiteRange(const ScalarPlane& plane, bool positiveOnl
             continue;
         }
         const auto value = static_cast<double>(plane.values[pixel]);
-        if (!std::isfinite(value) || (positiveOnly && !(value > 0.0))) {
+        if (!std::isfinite(value)) {
             continue;
         }
         minimum = std::min(minimum, value);
@@ -164,10 +164,10 @@ std::pair<double, double> finiteRange(const ScalarPlane& plane, bool positiveOnl
 }
 
 // The display range for a slice: the user's explicit range, the level/file
-// metadata range, or the finite extrema of the plane itself (positive
-// extrema for a logarithmic scale), padded so minimum < maximum always
-// holds. Shared by executeSlice and the re-render-from-cache path, which
-// must agree exactly.
+// metadata range, or the finite extrema of the plane itself, padded so
+// minimum < maximum always holds. A logarithmic request whose range is not
+// strictly positive throws, so the caller can fall back to linear. Shared by
+// executeSlice and the re-render-from-cache path, which must agree exactly.
 std::pair<double, double> resolveRange(
     const std::shared_ptr<PlotfileDataset>& dataset, FieldId field,
     int maximumLevel, RangeMode rangeMode,
@@ -186,7 +186,7 @@ std::pair<double, double> resolveRange(
         selectedRange = std::pair{statistics->minimum, statistics->maximum};
     }
     auto [minimum, maximum] = selectedRange
-        ? *selectedRange : finiteRange(plane, logarithmic);
+        ? *selectedRange : finiteRange(plane);
     if (minimum == maximum) {
         if (logarithmic && minimum > 0.0) {
             minimum /= 1.0 + 1.0e-6;
@@ -236,9 +236,10 @@ std::array<int, 2> finestNativeOutputSize(
 }
 
 // Like resolveRange, but if a logarithmic scale is requested and the range
-// cannot be made positive (no positive values, or a Level/File/User minimum
-// <= 0), it falls back to a linear range and reports logarithmic=false so the
-// caller renders linearly instead of failing the whole slice.
+// is not strictly positive (a Visible/Level/File/User minimum <= 0, or no
+// finite values), it falls back to a linear range and reports
+// logarithmic=false so the caller renders linearly instead of failing the
+// whole slice.
 struct ResolvedRange {
     double minimum;
     double maximum;
