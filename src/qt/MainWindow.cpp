@@ -25,6 +25,7 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QException>
@@ -45,6 +46,8 @@
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QPointer>
+#include <QProcess>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QRect>
 #include <QSettings>
@@ -886,6 +889,11 @@ MainWindow::MainWindow(QWidget* parent)
     // stops the other (see setPlaybackMode).
     m_playbackTimer = new QTimer(this);
     connect(m_playbackTimer, &QTimer::timeout, this, [this] { playbackTick(); });
+    // Animation export advances one frame at a time as each renders.
+    connect(this, &MainWindow::sequenceFrameDisplayed,
+        this, [this](int index) { onExportFrameDisplayed(index); });
+    connect(this, &MainWindow::sequenceFrameFailed,
+        this, [this] { onExportFrameFailed(); });
     applySpeed();
     connect(m_animationPanel, &AnimationPanel::sweepStepRequested, this,
         [this](int direction) { stepSweep(direction); });
@@ -1040,6 +1048,11 @@ void MainWindow::createMenus()
     auto* exportAction = new QAction(tr("&Export Image..."), this);
     connect(exportAction, &QAction::triggered, this, [this] { exportImage(); });
 
+    m_exportAnimationAction = new QAction(tr("Export &Animation..."), this);
+    m_exportAnimationAction->setEnabled(false);
+    connect(m_exportAnimationAction, &QAction::triggered,
+        this, [this] { exportAnimation(); });
+
     auto* quitAction = new QAction(tr("&Quit"), this);
     quitAction->setShortcut(QKeySequence::Quit);
     connect(quitAction, &QAction::triggered, this, &QWidget::close);
@@ -1053,6 +1066,7 @@ void MainWindow::createMenus()
     fileMenu->addAction(openMultiFabAction);
     fileMenu->addSeparator();
     fileMenu->addAction(exportAction);
+    fileMenu->addAction(m_exportAnimationAction);
     fileMenu->addSeparator();
     fileMenu->addAction(quitAction);
 
@@ -2110,36 +2124,265 @@ void MainWindow::exportImage()
 
     // composedImage() carries grid boxes (and overlays) when on; the color bar
     // is optional and composited alongside when requested.
-    const QImage scalar = view->composedImage();
-    if (scalar.isNull()) {
+    const QImage composite = composeExportFrame(includeColorBar);
+    if (composite.isNull()) {
         QMessageBox::critical(this, tr("Cannot export image"),
             tr("The image could not be composited."));
         return;
     }
 
-    QImage composite;
-    if (includeColorBar) {
-        constexpr int gap = 8;
-        const int barWidth = m_colorBar->preferredWidth();
-        composite = QImage(QSize(scalar.width() + gap + barWidth, scalar.height()),
-            QImage::Format_ARGB32_Premultiplied);
-        {
-            QPainter painter(&composite);
-            // Match the widget font so the labels render at the width
-            // preferredWidth measured, keeping the panel edge tight.
-            painter.setFont(m_colorBar->font());
-            painter.fillRect(composite.rect(), viewportBackground());
-            painter.drawImage(0, 0, scalar);
-            m_colorBar->paintBar(&painter,
-                QRect(scalar.width() + gap, 0, barWidth, composite.height()));
-        }
-    } else {
-        composite = scalar;
-    }
-
     if (!composite.save(filename, "PNG")) {
         QMessageBox::critical(this, tr("Cannot export image"),
             tr("The image could not be written to %1.").arg(filename));
+    }
+}
+
+QImage MainWindow::composeExportFrame(bool includeColorBar) const
+{
+    auto* view = m_activeView != nullptr ? m_activeView->view : nullptr;
+    if (view == nullptr) {
+        return {};
+    }
+    // composedImage() carries grid boxes (and overlays) when on; the color bar
+    // is optional and composited alongside when requested.
+    const QImage scalar = view->composedImage();
+    if (scalar.isNull() || !includeColorBar) {
+        return scalar;
+    }
+    constexpr int gap = 8;
+    const int barWidth = m_colorBar->preferredWidth();
+    QImage composite(QSize(scalar.width() + gap + barWidth, scalar.height()),
+        QImage::Format_ARGB32_Premultiplied);
+    {
+        QPainter painter(&composite);
+        // Match the widget font so the labels render at the width preferredWidth
+        // measured, keeping the panel edge tight against the text.
+        painter.setFont(m_colorBar->font());
+        painter.fillRect(composite.rect(), viewportBackground());
+        painter.drawImage(0, 0, scalar);
+        m_colorBar->paintBar(&painter,
+            QRect(scalar.width() + gap, 0, barWidth, composite.height()));
+    }
+    return composite;
+}
+
+bool MainWindow::probeFfmpeg() const
+{
+    QProcess proc;
+    proc.start("ffmpeg", {"-version"});
+    if (!proc.waitForStarted(2000) || !proc.waitForFinished(2000)) {
+        return false;
+    }
+    return proc.exitStatus() == QProcess::NormalExit && proc.exitCode() == 0;
+}
+
+void MainWindow::exportAnimation()
+{
+    if (m_exportAnim.active) {
+        return;
+    }
+    if (m_sequenceFrames.empty()) {
+        QMessageBox::information(this, tr("No animation"),
+            tr("Open a plotfile sequence before exporting an animation."));
+        return;
+    }
+    auto* view = m_activeView != nullptr ? m_activeView->view : nullptr;
+    if (view == nullptr || !view->hasImage()) {
+        QMessageBox::information(this, tr("No image"),
+            tr("Open a dataset before exporting an animation."));
+        return;
+    }
+
+    // Color-bar choice (same options as single-image export); applies to all.
+    QMessageBox choice(this);
+    choice.setIcon(QMessageBox::Question);
+    choice.setWindowTitle(tr("Export Animation"));
+    choice.setText(tr("Include the color bar in every frame?"));
+    auto* withBar = choice.addButton(tr("&With color bar"), QMessageBox::AcceptRole);
+    auto* withoutBar = choice.addButton(tr("With&out color bar"), QMessageBox::AcceptRole);
+    choice.addButton(QMessageBox::Cancel);
+    choice.exec();
+    if (choice.clickedButton() != withBar && choice.clickedButton() != withoutBar) {
+        return;
+    }
+    const bool includeColorBar = choice.clickedButton() == withBar;
+
+    // The chosen file's directory and basename (minus extension) become the
+    // output location and the PNG/MP4 stem, e.g. "runs/anim.png" ->
+    // runs/anim_0000.png ... runs/anim.mp4.
+    const auto settings = makeSettings();
+    const auto path = QFileDialog::getSaveFileName(this,
+        tr("Export animation"),
+        settings.value(QStringLiteral("lastOpenDirectory")).toString(),
+        tr("PNG image (*.png)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    const QFileInfo info(path);
+    const auto total = static_cast<int>(m_sequenceFrames.size());
+    const int digits =
+        std::max(5, static_cast<int>(QString::number(total - 1).length()));
+
+    m_exportAnim = ExportAnimationState{};
+    m_exportAnim.active = true;
+    m_exportAnim.includeColorBar = includeColorBar;
+    m_exportAnim.hasFfmpeg = probeFfmpeg();
+    m_exportAnim.totalFrames = total;
+    m_exportAnim.restoreIndex = m_sequenceIndex;
+    m_exportAnim.digitWidth = digits;
+    m_exportAnim.directory = info.absolutePath();
+    m_exportAnim.stem = info.completeBaseName();
+
+    m_exportAnim.progress = new QProgressDialog(
+        tr("Rendering frame 1 of %1...").arg(total), tr("Cancel"), 0, total, this);
+    m_exportAnim.progress->setWindowTitle(tr("Export Animation"));
+    m_exportAnim.progress->setWindowModality(Qt::WindowModal);
+    m_exportAnim.progress->setMinimumDuration(0);
+    m_exportAnim.progress->setValue(0);
+    connect(m_exportAnim.progress, &QProgressDialog::canceled,
+        this, [this] { m_exportAnim.canceled = true; });
+
+    // Freeze the action and stop playback while exporting.
+    m_exportAnimationAction->setEnabled(false);
+    setPlaybackMode(PlaybackMode::None);
+
+    goToSequenceFrame(0);
+}
+
+void MainWindow::onExportFrameDisplayed(int index)
+{
+    if (!m_exportAnim.active || m_exportAnim.framesDone) {
+        return;
+    }
+    if (m_exportAnim.canceled) {
+        endExportAnimation(false, tr("Animation export cancelled."));
+        return;
+    }
+
+    const QImage frame = composeExportFrame(m_exportAnim.includeColorBar);
+    if (frame.isNull()) {
+        endExportAnimation(false, tr("A frame could not be rendered."));
+        return;
+    }
+    const QString padded = QString("%1").arg(index,
+        m_exportAnim.digitWidth, 10, QChar('0'));
+    const QString filePath = QDir(m_exportAnim.directory).absoluteFilePath(
+        m_exportAnim.stem + "_" + padded + ".png");
+    if (!frame.save(filePath, "PNG")) {
+        endExportAnimation(false, tr("Could not write %1.").arg(filePath));
+        return;
+    }
+
+    m_exportAnim.progress->setValue(index + 1);
+    m_exportAnim.progress->setLabelText(tr("Rendering frame %1 of %2...")
+        .arg(index + 2).arg(m_exportAnim.totalFrames));
+
+    if (index + 1 < m_exportAnim.totalFrames) {
+        goToSequenceFrame(index + 1);
+    } else {
+        finalizeExportAnimation();
+    }
+}
+
+void MainWindow::onExportFrameFailed()
+{
+    if (!m_exportAnim.active) {
+        return;
+    }
+    endExportAnimation(false, tr("A frame failed to load; animation export aborted."));
+}
+
+void MainWindow::finalizeExportAnimation()
+{
+    // Block re-entry from any straggling sequenceFrameDisplayed (e.g. a prefetch)
+    // once the PNG loop is complete.
+    m_exportAnim.framesDone = true;
+
+    if (!m_exportAnim.hasFfmpeg) {
+        endExportAnimation(true, tr("Exported %1 PNG frames "
+            "(FFmpeg not found; skipped MP4).").arg(m_exportAnim.totalFrames));
+        return;
+    }
+
+    m_exportAnim.progress->setLabelText(tr("Encoding MP4..."));
+    m_exportAnim.progress->setRange(0, 0);  // indeterminate while encoding
+
+    const QString inputPattern = m_exportAnim.directory + "/"
+        + m_exportAnim.stem + "_%0" + QString::number(m_exportAnim.digitWidth)
+        + "d.png";
+    const QString outputPath = QDir(m_exportAnim.directory).absoluteFilePath(
+        m_exportAnim.stem + ".mp4");
+    const QStringList args{
+        "-y",
+        "-framerate", "24",
+        "-i", inputPattern,
+        // libx264 + yuv420p needs even dimensions; round down (<=1 px) so an
+        // odd-width composite (e.g. image + colour bar) still encodes.
+        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        "-pix_fmt", "yuv420p",
+        "-crf", "14",
+        outputPath,
+    };
+
+    auto* watcher = new QFutureWatcher<QPair<int, QString>>(this);
+    connect(watcher, &QFutureWatcher<QPair<int, QString>>::finished, this,
+        [this, watcher, outputPath] {
+            const auto result = watcher->result();
+            watcher->deleteLater();
+            if (result.first == 0) {
+                endExportAnimation(true, tr("Exported %1 frames and %2.")
+                    .arg(m_exportAnim.totalFrames).arg(outputPath));
+            } else {
+                // ffmpeg writes its diagnostics to stderr; surface the tail so
+                // the failure is diagnosable instead of just an exit code.
+                endExportAnimation(false, tr("FFmpeg failed (exit %1). "
+                    "PNG frames were still written.\n\n%2")
+                    .arg(result.first).arg(result.second));
+            }
+        });
+    // Run ffmpeg off the GUI thread (it blocks) and capture its merged output;
+    // the watcher brings (exit code, log tail) back here.
+    watcher->setFuture(QtConcurrent::run([args]() -> QPair<int, QString> {
+        QProcess proc;
+        proc.setProcessChannelMode(QProcess::MergedChannels);
+        proc.start("ffmpeg", args);
+        if (!proc.waitForStarted(3000)) {
+            return { -2, QString::fromLocal8Bit(proc.readAllStandardOutput()) };
+        }
+        proc.waitForFinished(-1);
+        const int code = proc.exitStatus() == QProcess::NormalExit
+            ? proc.exitCode() : -1;
+        QString log = QString::fromLocal8Bit(proc.readAllStandardOutput());
+        if (log.length() > 800) {
+            log = QStringLiteral("...") + log.right(800);
+        }
+        return { code, log.trimmed() };
+    }));
+}
+
+void MainWindow::endExportAnimation(bool success, const QString& message)
+{
+    const bool wasActive = m_exportAnim.active;
+    const int restoreIndex = m_exportAnim.restoreIndex;
+
+    if (m_exportAnim.progress != nullptr) {
+        m_exportAnim.progress->hide();
+        m_exportAnim.progress->deleteLater();
+    }
+    m_exportAnim = ExportAnimationState{};
+
+    // Return the user to the frame they were viewing.
+    if (wasActive && !m_sequenceFrames.empty()) {
+        goToSequenceFrame(restoreIndex < 0 ? 0 : restoreIndex);
+    }
+    m_exportAnimationAction->setEnabled(!m_sequenceFrames.empty());
+
+    if (wasActive) {
+        if (success) {
+            QMessageBox::information(this, tr("Export Animation"), message);
+        } else {
+            QMessageBox::warning(this, tr("Export Animation"), message);
+        }
     }
 }
 
@@ -2323,6 +2566,7 @@ void MainWindow::openDataset(const std::filesystem::path& path, bool metadataOnl
     m_levelMenu->setEnabled(false);
     m_contoursAction->setEnabled(false);
     m_datasetAction->setEnabled(false);
+    m_exportAnimationAction->setEnabled(false);
     m_openMetadata.reset();
     m_fileVersion.clear();
     m_probeLines.clear();
@@ -3321,6 +3565,7 @@ void MainWindow::configureSequenceControls(bool defaultPositions)
     m_levelMenu->setEnabled(true);
     m_contoursAction->setEnabled(true);
     m_datasetAction->setEnabled(true);
+    m_exportAnimationAction->setEnabled(true);
     ensureVectorFieldDefaults();
 }
 

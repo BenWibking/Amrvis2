@@ -13,6 +13,7 @@
 #include <amrvis/render2d/VectorGlyphs.hpp>
 
 #include <QElapsedTimer>
+#include <QImage>
 #include <QMainWindow>
 #include <QStringList>
 
@@ -39,6 +40,7 @@ class QLabel;
 class QLineF;
 class QMenu;
 class QPlainTextEdit;
+class QProgressDialog;
 class QStackedWidget;
 class QTimer;
 class QTreeWidget;
@@ -210,6 +212,17 @@ private:
     // "Open New Window" menu action; it shares no view/cache state with this one.
     MainWindow* createNewWindow();
     void exportImage();
+    void exportAnimation();
+    // Animation export is signal-driven (frame rendering is async): exportAnimation
+    // kicks off frame 0; onExportFrameDisplayed saves each rendered frame and
+    // advances; finalizeExportAnimation encodes the MP4; endExportAnimation is the
+    // shared cleanup/restore/report path.
+    void onExportFrameDisplayed(int index);
+    void onExportFrameFailed();
+    void finalizeExportAnimation();
+    void endExportAnimation(bool success, const QString& message);
+    [[nodiscard]] QImage composeExportFrame(bool includeColorBar) const;
+    [[nodiscard]] bool probeFfmpeg() const;
     void createMenus();
     void rebuildLevelMenu();
     void syncMenuChecks();
@@ -364,6 +377,24 @@ private:
     QAction* m_fitScaleAction = nullptr;
     QAction* m_contoursAction = nullptr;
     QAction* m_datasetAction = nullptr;
+    QAction* m_exportAnimationAction = nullptr;
+
+    // Drives File -> Export Animation... Active only while an export is running;
+    // sequenceFrameDisplayed advances it one frame at a time.
+    struct ExportAnimationState {
+        bool active = false;
+        bool canceled = false;
+        bool framesDone = false;
+        bool includeColorBar = false;
+        bool hasFfmpeg = false;
+        int totalFrames = 0;
+        int restoreIndex = -1;
+        int digitWidth = 5;
+        QString directory;
+        QString stem;
+        QProgressDialog* progress = nullptr;
+    };
+    ExportAnimationState m_exportAnim;
     std::shared_ptr<PlotfileDataset> m_dataset;
     std::shared_ptr<const DatasetMetadata> m_openMetadata;
     std::string m_fileVersion;
