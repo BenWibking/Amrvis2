@@ -706,6 +706,8 @@ MainWindow::MainWindow(QWidget* parent)
     sliceToolbar->addWidget(new QLabel(tr("Field:"), sliceToolbar));
     m_fieldSelector = new QComboBox(sliceToolbar);
     m_fieldSelector->setMinimumContentsLength(10);
+    m_fieldSelector->view()->setItemDelegate(new CurrentRowBulletDelegate(
+        m_fieldSelector, m_fieldSelector->view()));
     sliceToolbar->addWidget(m_fieldSelector);
     sliceToolbar->addSeparator();
     sliceToolbar->addWidget(new QLabel(tr("Level:"), sliceToolbar));
