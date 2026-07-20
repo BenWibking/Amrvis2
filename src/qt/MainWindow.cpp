@@ -380,8 +380,7 @@ void appendVectorGlyphs(const std::shared_ptr<PlotfileDataset>& dataset,
 
 [[nodiscard]] bool isContourMode(DisplayMode mode)
 {
-    return mode == DisplayMode::RasterContours
-        || mode == DisplayMode::ColorContours || mode == DisplayMode::BWContours;
+    return mode == DisplayMode::RasterContours;
 }
 
 // The cache-key comparison for PlaneViewState: everything a cached slice
@@ -1369,21 +1368,31 @@ void MainWindow::showContoursDialog()
     if (!m_dataset) {
         return;
     }
+    if (m_contoursDialog != nullptr) {
+        m_contoursDialog->raise();
+        m_contoursDialog->activateWindow();
+        return;
+    }
     const auto& fields = m_dataset->metadata().fields;
     std::vector<std::string> fieldNames;
     fieldNames.reserve(fields.size());
     for (const auto& field : fields) {
         fieldNames.push_back(field.name);
     }
-    SetContoursDialog dialog(fieldNames, this);
-    dialog.setMode(m_displayMode);
-    dialog.setContourCount(m_contourCount);
-    dialog.setVectorFields(m_vectorUField, m_vectorVField);
-    connect(&dialog, &SetContoursDialog::applied, this, [this, &dialog] {
-        applyContourSettings(dialog.mode(), dialog.contourCount(),
-            dialog.uField(), dialog.vField());
+    auto* dialog = new SetContoursDialog(fieldNames, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setMode(m_displayMode);
+    dialog->setContourCount(m_contourCount);
+    dialog->setVectorFields(m_vectorUField, m_vectorVField);
+    connect(dialog, &SetContoursDialog::applied, this, [this, dialog] {
+        applyContourSettings(dialog->mode(), dialog->contourCount(),
+            dialog->uField(), dialog->vField());
     });
-    dialog.exec();
+    connect(dialog, &QDialog::finished, this, [this] {
+        m_contoursDialog = nullptr;
+    });
+    m_contoursDialog = dialog;
+    dialog->show();
 }
 
 void MainWindow::applyContourSettings(
@@ -1531,22 +1540,6 @@ QLineF MainWindow::planeSegmentToScene(const PlaneViewState& state,
     return QLineF(QPointF(x0, top - y0), QPointF(x1, top - y1));
 }
 
-QColor MainWindow::contourValueColor(const PlaneViewState& state, double value) const
-{
-    // Same normalization renderScalarPlane applies to every pixel.
-    auto normalized = 0.0;
-    if (state.displayLogarithmic) {
-        const auto rangeMinimum = std::log(state.displayMinimum);
-        const auto rangeMaximum = std::log(state.displayMaximum);
-        normalized = (std::log(value) - rangeMinimum)
-            / (rangeMaximum - rangeMinimum);
-    } else {
-        normalized = (value - state.displayMinimum)
-            / (state.displayMaximum - state.displayMinimum);
-    }
-    return QColor::fromRgba(static_cast<QRgb>(m_palette.argb(normalized)));
-}
-
 QColor MainWindow::monochromeContourColor() const
 {
     const auto lowest = QColor::fromRgba(static_cast<QRgb>(m_palette.argb(0.0)));
@@ -1619,8 +1612,7 @@ void MainWindow::updateOverlay(PlaneViewState& state)
         }
         paths.reserve(pathsByValue.size());
         for (auto& [value, path] : pathsByValue) {
-            const auto color = m_displayMode == DisplayMode::ColorContours
-                ? contourValueColor(state, value) : monochrome;
+            const auto color = monochrome;
             paths.push_back({std::move(path), color, 1.0F});
         }
     } catch (const std::exception&) {
@@ -2090,7 +2082,14 @@ void MainWindow::restoreSettings()
             settings.value(QStringLiteral("range/logarithmic"), false).toBool());
     }
     {
-        const auto mode = settings.value(QStringLiteral("contours/mode"), 0).toInt();
+        auto mode = settings.value(QStringLiteral("contours/mode"), 0).toInt();
+        // Migrate removed modes: old ColorContours (2) and BWContours (3)
+        // become RasterContours; old VelocityVectors (4) becomes the new 2.
+        if (mode == 2 || mode == 3) {
+            mode = static_cast<int>(DisplayMode::RasterContours);
+        } else if (mode == 4) {
+            mode = static_cast<int>(DisplayMode::VelocityVectors);
+        }
         if (mode >= 0 && mode <= static_cast<int>(DisplayMode::VelocityVectors)) {
             m_displayMode = static_cast<DisplayMode>(mode);
         }
@@ -2635,6 +2634,11 @@ void MainWindow::openDataset(const std::filesystem::path& path, bool metadataOnl
     }
     // The dataset window shows this dataset's raw values; drop it too.
     closeDatasetWindow();
+    if (m_contoursDialog != nullptr) {
+        auto* dialog = m_contoursDialog;
+        m_contoursDialog = nullptr;
+        dialog->close();
+    }
     m_datasetPath = path;
     m_lastBlocksRead = 0;
     m_lastCacheHits = 0;

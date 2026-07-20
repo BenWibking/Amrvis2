@@ -67,16 +67,15 @@ SetContoursDialog::SetContoursDialog(const std::vector<std::string>& fieldNames,
     : QDialog(parent)
 {
     setWindowTitle(tr("Set Contours"));
-    setModal(true);
+    setWindowFlags(Qt::Window);
 
     auto* layout = new QVBoxLayout(this);
 
     auto* modeBox = new QGroupBox(tr("Display mode"), this);
     auto* modeLayout = new QVBoxLayout(modeBox);
     m_modeButtons = new QButtonGroup(this);
-    constexpr std::array<const char*, 5> modeLabels{
-        "Raster", "Raster && Contours", "Color Contours", "B/W Contours",
-        "Velocity Vectors"};
+    constexpr std::array<const char*, 3> modeLabels{
+        "Raster", "Raster && Contours", "Velocity Vectors"};
     for (std::size_t index = 0; index < modeLabels.size(); ++index) {
         auto* button = new QRadioButton(tr(modeLabels[index]), modeBox);
         m_modeButtons->addButton(button, static_cast<int>(index));

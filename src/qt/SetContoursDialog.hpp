@@ -16,8 +16,6 @@ namespace amrvis::qt {
 enum class DisplayMode {
     Raster,
     RasterContours,
-    ColorContours,
-    BWContours,
     VelocityVectors
 };
 

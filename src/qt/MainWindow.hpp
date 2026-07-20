@@ -285,8 +285,6 @@ private:
     void updateCrosshairs();
     [[nodiscard]] QLineF planeSegmentToScene(const PlaneViewState& state,
         float x0, float y0, float x1, float y1) const;
-    [[nodiscard]] QColor contourValueColor(const PlaneViewState& state,
-        double value) const;
     [[nodiscard]] QColor monochromeContourColor() const;
     [[nodiscard]] QColor sliceAxisColor(int axis) const;
 
@@ -345,6 +343,7 @@ private:
     // a late result neither reopens a closed window nor wastes I/O.
     std::stop_source m_linePlotStopSource;
     DatasetWindow* m_datasetWindow = nullptr;
+    SetContoursDialog* m_contoursDialog = nullptr;
     QComboBox* m_fieldSelector = nullptr;
     QComboBox* m_levelSelector = nullptr;
     QComboBox* m_rangeMode = nullptr;
