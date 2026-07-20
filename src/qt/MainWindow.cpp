@@ -1450,40 +1450,60 @@ void MainWindow::applyContourSettings(
 
 void MainWindow::showNumberFormatDialog()
 {
-    QDialog dialog(this);
-    dialog.setWindowTitle(tr("Number Format"));
-    dialog.setModal(true);
+    if (m_numberFormatDialog != nullptr) {
+        m_numberFormatDialog->raise();
+        m_numberFormatDialog->activateWindow();
+        return;
+    }
+    auto* dialog = new QDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("Number Format"));
+    dialog->setWindowFlags(Qt::Window);
 
-    auto* edit = new QLineEdit(m_numberFormat, &dialog);
+    auto* edit = new QLineEdit(m_numberFormat, dialog);
     edit->setMinimumWidth(160);
+    auto* syntaxLabel = new QLabel(
+        tr("C printf format, e.g. %1").arg(defaultNumberFormat()), dialog);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok
-        | QDialogButtonBox::Cancel, &dialog);
+        | QDialogButtonBox::Apply | QDialogButtonBox::Cancel, dialog);
     auto* defaultButton = buttons->addButton(
         tr("Default"), QDialogButtonBox::ResetRole);
-    auto* layout = new QVBoxLayout(&dialog);
+    auto* layout = new QVBoxLayout(dialog);
+    layout->addWidget(syntaxLabel);
     layout->addWidget(edit);
     layout->addWidget(buttons);
 
-    connect(defaultButton, &QPushButton::clicked, edit, [edit] {
+    connect(defaultButton, &QPushButton::clicked, dialog, [this, edit] {
         edit->setText(defaultNumberFormat());
+        applyNumberFormat(defaultNumberFormat());
     });
-    // OK validates first; an invalid format warns and keeps the dialog open.
-    connect(buttons, &QDialogButtonBox::accepted, &dialog,
-        [this, &dialog, edit] {
-            const auto format = edit->text();
-            if (!isValidNumberFormat(format)) {
-                QMessageBox::warning(&dialog, tr("Invalid number format"),
-                    tr("\"%1\" is not a usable number format.\n"
-                       "Use a printf-style format with exactly one floating "
-                       "conversion, e.g. %2.")
-                        .arg(format, defaultNumberFormat()));
-                return;
+    connect(buttons, &QDialogButtonBox::clicked, dialog,
+        [this, dialog, edit, buttons](QAbstractButton* button) {
+            const auto role = buttons->buttonRole(button);
+            if (role == QDialogButtonBox::AcceptRole
+                || role == QDialogButtonBox::ApplyRole) {
+                const auto format = edit->text();
+                if (!isValidNumberFormat(format)) {
+                    QMessageBox::warning(dialog, tr("Invalid number format"),
+                        tr("\"%1\" is not a usable number format.\n"
+                           "Use a printf-style format with exactly one floating "
+                           "conversion, e.g. %2.")
+                            .arg(format, defaultNumberFormat()));
+                    return;
+                }
+                applyNumberFormat(format);
+                if (role == QDialogButtonBox::AcceptRole) {
+                    dialog->accept();
+                }
+            } else if (role == QDialogButtonBox::RejectRole) {
+                dialog->reject();
             }
-            applyNumberFormat(format);
-            dialog.accept();
         });
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    dialog.exec();
+    connect(dialog, &QDialog::finished, this, [this] {
+        m_numberFormatDialog = nullptr;
+    });
+    m_numberFormatDialog = dialog;
+    dialog->show();
 }
 
 void MainWindow::applyNumberFormat(const QString& format)
@@ -2653,6 +2673,11 @@ void MainWindow::openDataset(const std::filesystem::path& path, bool metadataOnl
     if (m_contoursDialog != nullptr) {
         auto* dialog = m_contoursDialog;
         m_contoursDialog = nullptr;
+        dialog->close();
+    }
+    if (m_numberFormatDialog != nullptr) {
+        auto* dialog = m_numberFormatDialog;
+        m_numberFormatDialog = nullptr;
         dialog->close();
     }
     m_datasetPath = path;
