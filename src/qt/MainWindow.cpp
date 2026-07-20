@@ -555,6 +555,47 @@ SliceDisplayResult refreshCachedSlice(
     return result;
 }
 
+// Combo data sentinel for "Update to Level N" entries, which composite
+// levels 0..N with FinestAvailable. The selected level N is data - 1000.
+constexpr int kUpdateToLevelOffset = 1000;
+
+struct LevelSelection {
+    CompositionPolicy composition = CompositionPolicy::FinestAvailable;
+    int maximumLevel = 0;
+};
+
+LevelSelection decodeLevelData(int data, int finestLevel)
+{
+    if (data >= kUpdateToLevelOffset) {
+        return {CompositionPolicy::FinestAvailable, data - kUpdateToLevelOffset};
+    }
+    if (data < 0) {
+        return {CompositionPolicy::FinestAvailable, finestLevel};
+    }
+    return {CompositionPolicy::ExactLevel, data};
+}
+
+void populateLevelCombo(QComboBox* combo, int finestLevel)
+{
+    combo->clear();
+    combo->addItem(QObject::tr("Finest available"), -1);
+    // "Level N only" is redundant when there is only one level; the whole
+    // block is skipped for finestLevel == 0 so the combo shows just the
+    // "Finest available" entry.
+    if (finestLevel <= 0) {
+        return;
+    }
+    // "Update to Level N" (composite 0..N) in reverse order, from
+    // finestLevel-1 down to 1; only when there are at least three levels.
+    for (int level = finestLevel - 1; level >= 1; --level) {
+        combo->addItem(QObject::tr("Levs 0-%1").arg(level),
+            kUpdateToLevelOffset + level);
+    }
+    for (int level = 0; level <= finestLevel; ++level) {
+        combo->addItem(QObject::tr("Level %1 only").arg(level), level);
+    }
+}
+
 // Opens one plotfile on a worker thread and renders the slice(s) described
 // by spec — one per ortho view for 3-D, the single y-normal view for 2-D.
 // Shared by the initial open path (default spec) and the sequence path
@@ -581,8 +622,15 @@ InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
     const auto field = std::min(spec.field, fieldCount - 1);
     // An out-of-range exact level falls back to finest-available, matching
     // the level combo's behavior when a frame has fewer levels.
-    const auto levelSelection = spec.levelSelection >= 0
-        && spec.levelSelection <= metadata.finestLevel ? spec.levelSelection : -1;
+    // Combo data encoding: -1=finest, N=level N only, 1000+N=update to N.
+    const auto levelSelection = spec.levelSelection >= -1
+        && spec.levelSelection <= metadata.finestLevel
+            ? spec.levelSelection
+            : (spec.levelSelection >= kUpdateToLevelOffset
+                && spec.levelSelection - kUpdateToLevelOffset
+                    <= metadata.finestLevel)
+            ? spec.levelSelection
+            : -1;
     std::array<double, 3> positions{0.0, 0.0, 0.0};
     for (std::size_t axis = 0; axis < 3; ++axis) {
         const auto lower = metadata.physicalDomain.lower[axis];
@@ -627,10 +675,10 @@ InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
         request.visibleRegion = region;
         request.outputSize = finestNativeOutputSize(
             metadata, request.visibleRegion, request.normalDirection);
-        request.composition = levelSelection < 0
-            ? CompositionPolicy::FinestAvailable : CompositionPolicy::ExactLevel;
-        request.maximumLevel = levelSelection < 0
-            ? metadata.finestLevel : levelSelection;
+        const auto [composition, maximumLevel] = decodeLevelData(
+            levelSelection, metadata.finestLevel);
+        request.composition = composition;
+        request.maximumLevel = maximumLevel;
         if (metadata.dimension == 3) {
             request.physicalPosition = positions[static_cast<std::size_t>(normal)];
         }
@@ -712,6 +760,9 @@ MainWindow::MainWindow(QWidget* parent)
     sliceToolbar->addSeparator();
     sliceToolbar->addWidget(new QLabel(tr("Level:"), sliceToolbar));
     m_levelSelector = new QComboBox(sliceToolbar);
+    m_levelSelector->setMinimumContentsLength(8);
+    m_levelSelector->view()->setItemDelegate(new CurrentRowBulletDelegate(
+        m_levelSelector, m_levelSelector->view()));
     sliceToolbar->addWidget(m_levelSelector);
     sliceToolbar->addSeparator();
     // 3-D shared slice positions: one compact spinbox per axis. The whole
@@ -1167,20 +1218,56 @@ void MainWindow::rebuildLevelMenu()
     auto* finest = new QAction(tr("Finest available"), m_levelMenu);
     finest->setCheckable(true);
     finest->setActionGroup(m_levelGroup);
-    finest->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
-    connect(finest, &QAction::triggered, this,
-        [this] { m_levelSelector->setCurrentIndex(0); });
+    finest->setData(-1);
+    {
+        QList<QKeySequence> finestShortcuts{QKeySequence(Qt::CTRL | Qt::Key_0)};
+        if (metadata.finestLevel >= 1 && metadata.finestLevel <= 9) {
+            finestShortcuts.append(QKeySequence(
+                Qt::CTRL | static_cast<Qt::Key>(Qt::Key_0 + metadata.finestLevel)));
+        }
+        finest->setShortcuts(finestShortcuts);
+    }
+    connect(finest, &QAction::triggered, this, [this] {
+        const auto index = m_levelSelector->findData(-1);
+        if (index >= 0) {
+            m_levelSelector->setCurrentIndex(index);
+        }
+    });
     m_levelMenu->addAction(finest);
+    // "Levs 0-N" entries, descending, only when there are at least three levels.
+    for (int level = metadata.finestLevel - 1; level >= 1; --level) {
+        const auto comboData = kUpdateToLevelOffset + level;
+        auto* action = new QAction(tr("Levs 0-%1").arg(level), m_levelMenu);
+        action->setCheckable(true);
+        action->setActionGroup(m_levelGroup);
+        action->setData(comboData);
+        if (level < 10) {
+            action->setShortcut(QKeySequence(
+                Qt::CTRL | static_cast<Qt::Key>(Qt::Key_0 + level)));
+        }
+        connect(action, &QAction::triggered, this, [this, comboData] {
+            const auto index = m_levelSelector->findData(comboData);
+            if (index >= 0) {
+                m_levelSelector->setCurrentIndex(index);
+            }
+        });
+        m_levelMenu->addAction(action);
+    }
     for (int level = 0; level <= metadata.finestLevel; ++level) {
         auto* action = new QAction(tr("Level %1 only").arg(level), m_levelMenu);
         action->setCheckable(true);
         action->setActionGroup(m_levelGroup);
-        if (level < 9) {
+        action->setData(level);
+        if (level < 10) {
             action->setShortcut(QKeySequence(
-                Qt::CTRL | static_cast<Qt::Key>(Qt::Key_1 + level)));
+                Qt::ALT | static_cast<Qt::Key>(Qt::Key_0 + level)));
         }
-        connect(action, &QAction::triggered, this,
-            [this, level] { m_levelSelector->setCurrentIndex(level + 1); });
+        connect(action, &QAction::triggered, this, [this, level] {
+            const auto index = m_levelSelector->findData(level);
+            if (index >= 0) {
+                m_levelSelector->setCurrentIndex(index);
+            }
+        });
         m_levelMenu->addAction(action);
     }
     syncMenuChecks();
@@ -1188,10 +1275,10 @@ void MainWindow::rebuildLevelMenu()
 
 void MainWindow::syncMenuChecks()
 {
-    const auto levelIndex = m_levelSelector->currentIndex();
+    const auto currentData = m_levelSelector->currentData().toInt();
     const auto levelActions = m_levelMenu->actions();
-    for (int index = 0; index < levelActions.size(); ++index) {
-        levelActions[index]->setChecked(index == levelIndex);
+    for (auto* action : levelActions) {
+        action->setChecked(action->data().toInt() == currentData);
     }
 }
 
@@ -1573,7 +1660,8 @@ void MainWindow::showKeyboardMouseReference()
     add(tr("0"), tr("Fit to the window"));
     add(tr("1-6"), tr("Fixed zoom scales (1x-32x)"));
     add(tr("Ctrl+0"), tr("Composite the finest available level"));
-    add(tr("Ctrl+1-9"), tr("Show one exact AMR level"));
+    add(tr("Ctrl+1-9"), tr("Composite levels 0 through N (Levs 0-N)"));
+    add(tr("Alt+0-9"), tr("Show one exact AMR level"));
     add(tr("Ctrl+D"), tr("Open the Dataset window (raw cell values per level)"));
 
     QMessageBox box(this);
@@ -1810,9 +1898,8 @@ void MainWindow::linePlotRequested(PlaneViewState& state, int imageX, int imageY
     const auto& metadata = dataset->metadata();
     const auto horizontal = button == Qt::MiddleButton;
     const auto level = m_levelSelector->currentData().toInt();
-    const auto maximumLevel = level < 0 ? metadata.finestLevel : level;
-    const auto composition = level < 0
-        ? CompositionPolicy::FinestAvailable : CompositionPolicy::ExactLevel;
+    const auto [composition, maximumLevel] = decodeLevelData(
+        level, metadata.finestLevel);
     const auto field = m_displayMode == DisplayMode::VelocityVectors
         ? static_cast<std::uint32_t>(std::max(m_vectorUField, 0))
         : m_fieldSelector->currentData().toUInt();
@@ -2726,11 +2813,7 @@ void MainWindow::configureSliceControls()
     }
     m_fieldSelector->setCurrentIndex(0);
 
-    m_levelSelector->clear();
-    m_levelSelector->addItem(tr("Finest available"), -1);
-    for (int level = 0; level <= metadata.finestLevel; ++level) {
-        m_levelSelector->addItem(tr("Level %1 only").arg(level), level);
-    }
+    populateLevelCombo(m_levelSelector, metadata.finestLevel);
     m_levelSelector->setCurrentIndex(0);
 
     m_controlsReady = true;
@@ -2873,9 +2956,10 @@ void MainWindow::requestSlice(PlaneViewState& state, bool rasterDirty)
     request.outputSize = finestNativeOutputSize(
         metadata, request.visibleRegion, state.normal);
     const auto level = m_levelSelector->currentData().toInt();
-    request.composition = level < 0
-        ? CompositionPolicy::FinestAvailable : CompositionPolicy::ExactLevel;
-    request.maximumLevel = level < 0 ? metadata.finestLevel : level;
+    const auto [composition, maximumLevel] = decodeLevelData(
+        level, metadata.finestLevel);
+    request.composition = composition;
+    request.maximumLevel = maximumLevel;
 
     const auto rangeMode = static_cast<RangeMode>(m_rangeMode->currentData().toInt());
     std::optional<std::pair<double, double>> userRange;
@@ -3003,10 +3087,12 @@ void MainWindow::updateGridBoxes(PlaneViewState& state)
     const auto& plane = state.plane;
     const auto normal = metadata.dimension == 3 ? state.normal : -1;
     const auto axes = displayAxes(state.normal);
-    const auto selectedLevel = m_levelSelector->currentData().toInt();
-    const auto firstLevel = selectedLevel < 0 ? 0 : selectedLevel;
-    const auto lastLevel = selectedLevel < 0
-        ? metadata.finestLevel : selectedLevel;
+    const auto rawLevel = m_levelSelector->currentData().toInt();
+    const auto [composition, maximumLevel] = decodeLevelData(
+        rawLevel, metadata.finestLevel);
+    const auto firstLevel = composition == CompositionPolicy::ExactLevel
+        ? maximumLevel : 0;
+    const auto lastLevel = maximumLevel;
 
     const auto xAxis = static_cast<std::size_t>(axes[0]);
     const auto yAxis = static_cast<std::size_t>(axes[1]);
@@ -3518,10 +3604,7 @@ void MainWindow::configureSequenceControls(bool defaultPositions)
         m_fieldSelector->setCurrentIndex(
             std::clamp(previousField, 0, m_fieldSelector->count() - 1));
         m_levelSelector->clear();
-        m_levelSelector->addItem(tr("Finest available"), -1);
-        for (int level = 0; level <= metadata.finestLevel; ++level) {
-            m_levelSelector->addItem(tr("Level %1 only").arg(level), level);
-        }
+        populateLevelCombo(m_levelSelector, metadata.finestLevel);
         const auto levelIndex = m_levelSelector->findData(previousLevel);
         m_levelSelector->setCurrentIndex(levelIndex >= 0 ? levelIndex : 0);
     }

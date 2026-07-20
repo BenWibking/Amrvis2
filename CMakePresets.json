@@ -36,6 +36,19 @@
       "cacheVariables": {
         "AMRVIS_ENABLE_SANITIZERS": "ON"
       }
+    },
+    {
+      "name": "release",
+      "displayName": "Release build",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "AMRVIS_ENABLE_QT": "ON",
+        "AMRVIS_ENABLE_VTK": "OFF",
+        "AMRVIS_ENABLE_MPI": "OFF",
+        "AMRVIS_BUILD_TESTS": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -50,6 +63,10 @@
     {
       "name": "sanitizers",
       "configurePreset": "sanitizers"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
     }
   ],
   "testPresets": [
@@ -74,6 +91,13 @@
         "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
         "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"
       },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
       "output": {
         "outputOnFailure": true
       }
