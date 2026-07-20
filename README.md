@@ -79,10 +79,10 @@ Mouse:
 
 - Left click: probe the value under the cursor
 - Left drag: zoom to the rubber-band subregion
-- Middle drag: horizontal line plot (2-D); in 3-D moves the slice along the
-  vertical in-view axis (hold Shift or Ctrl for a line plot)
-- Right drag: vertical line plot (2-D); in 3-D moves the slice along the
+- Middle click: horizontal line plot (2-D); in 3-D moves the slice along the
   horizontal in-view axis (hold Shift or Ctrl for a line plot)
+- Right click: vertical line plot (2-D); in 3-D moves the slice along the
+  vertical in-view axis (hold Shift or Ctrl for a line plot)
 - Mouse wheel: zoom; double click: refit to the window
 
 Keys: B toggles grid boxes, 0 fits to the window, 1-6 pick fixed scales

@@ -23,7 +23,7 @@ class QRubberBand;
 namespace amrvis::qt {
 
 // One curve in the line plot window: a snapshot of a LineQuery result plus
-// the request context needed for the legend text and the ASCII export.
+// the request context needed for the legend text.
 struct LinePlotCurve {
     LineResult line;
     std::string fieldName;
@@ -48,6 +48,8 @@ public:
     void setCurves(const std::vector<LinePlotCurve>* curves);
     void setNumberFormat(QString format);
     void resetZoom();
+    // Toggles per-sample data markers over each curve (legacy Amrvis style).
+    void setShowMarkers(bool on);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -62,6 +64,7 @@ private:
 
     const std::vector<LinePlotCurve>* m_curves = nullptr;
     QString m_numberFormat;
+    bool m_showMarkers = false;
     std::optional<QRectF> m_zoom;
     QPoint m_pressPosition;
     QRubberBand* m_rubberBand = nullptr;
@@ -69,8 +72,8 @@ private:
 };
 
 // Legacy-style XY line plot window: plot area plus a side panel with a
-// checkable legend (colored swatch + description per curve) and the
-// Clear / Remove Selected / Export ASCII / Reset Zoom / Close buttons.
+// checkable legend (colored swatch + description per curve), a Data Markers
+// toggle, and the Clear / Reset Zoom / Close buttons.
 class LinePlotWindow final : public QWidget {
     Q_OBJECT
 
@@ -84,8 +87,6 @@ public:
 
 private:
     void clearCurves();
-    void removeSelected();
-    void exportAscii();
     [[nodiscard]] QString curveDescription(const LinePlotCurve& curve) const;
 
     LinePlotWidget* m_plot = nullptr;

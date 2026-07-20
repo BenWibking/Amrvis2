@@ -1676,13 +1676,13 @@ void MainWindow::showKeyboardMouseReference()
     };
     add(tr("Left click"), tr("Probe the value under the cursor"));
     add(tr("Left drag"), tr("Zoom to the rubber-band subregion"));
-    add(tr("Middle drag (2-D)"), tr("Horizontal line plot"));
-    add(tr("Middle drag (3-D)"),
-        tr("Move the slice along the vertical axis "
-           "(hold Shift or Ctrl for a line plot)"));
-    add(tr("Right drag (2-D)"), tr("Vertical line plot"));
-    add(tr("Right drag (3-D)"),
+    add(tr("Middle click (2-D)"), tr("Horizontal line plot"));
+    add(tr("Middle click (3-D)"),
         tr("Move the slice along the horizontal axis "
+           "(hold Shift or Ctrl for a line plot)"));
+    add(tr("Right click (2-D)"), tr("Vertical line plot"));
+    add(tr("Right click (3-D)"),
+        tr("Move the slice along the vertical axis "
            "(hold Shift or Ctrl for a line plot)"));
     add(tr("Wheel / double click"), tr("Zoom in or out / refit to the window"));
     add(tr("B"), tr("Toggle AMR grid boxes"));
@@ -2004,20 +2004,23 @@ void MainWindow::sliceMoveRequested(PlaneViewState& state, int imageX, int image
         || state.plane.width <= 0 || state.plane.height <= 0) {
         return;
     }
-    // A middle (horizontal guide) drag moves the axis pointing vertically in
-    // this view; a right (vertical guide) drag moves the horizontal one.
+    // Match legacy Amrvis: a middle click moves the slice along the horizontal
+    // axis (x in this view), a right click along the vertical axis (y) — the
+    // same middle=x / right=y split the 2-D line plot uses. The drag guide is
+    // drawn perpendicular to the axis being moved (see ImageView::updateLineGuide).
     const auto axes = displayAxes(state.normal);
     const auto& region = state.plane.physicalRegion;
-    int axis = axes[0];
+    int axis;
     auto fraction = 0.0;
     if (button == Qt::MiddleButton) {
-        axis = axes[1];
+        axis = axes[0];  // horizontal axis
+        fraction = (static_cast<double>(imageX) + 0.5)
+            / static_cast<double>(state.plane.width);
+    } else {
+        axis = axes[1];  // vertical axis
         const auto planeY = state.plane.height - 1 - imageY;
         fraction = (static_cast<double>(planeY) + 0.5)
             / static_cast<double>(state.plane.height);
-    } else {
-        fraction = (static_cast<double>(imageX) + 0.5)
-            / static_cast<double>(state.plane.width);
     }
     const auto index = static_cast<std::size_t>(axis);
     setSlicePosition(axis, region.lower[index]
@@ -2063,6 +2066,19 @@ void MainWindow::appendLinePlotCurve(const LineResult& line,
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    // Secondary top-level windows are parentless or non-modal; close them with
+    // the main window so they don't linger and keep the process alive.
+    if (m_linePlotWindow != nullptr) {
+        auto* linePlotWindow = m_linePlotWindow;
+        m_linePlotWindow = nullptr;
+        linePlotWindow->close();
+    }
+    closeDatasetWindow();
+    if (m_contoursDialog != nullptr) {
+        auto* dialog = m_contoursDialog;
+        m_contoursDialog = nullptr;
+        dialog->close();
+    }
     saveSettings();
     auto settings = makeSettings();
     settings.setValue(QStringLiteral("geometry"), saveGeometry());

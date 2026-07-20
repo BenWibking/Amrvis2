@@ -2,13 +2,11 @@
 #include "NumberFormat.hpp"
 #include "Theme.hpp"
 
-#include <QFile>
-#include <QFileDialog>
+#include <QCheckBox>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QListWidget>
 #include <QListWidgetItem>
-#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPixmap>
@@ -16,8 +14,6 @@
 #include <QPushButton>
 #include <QRect>
 #include <QRubberBand>
-#include <QStringList>
-#include <QTextStream>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -38,13 +34,6 @@ const std::array<QColor, 8>& curveColors()
 }
 
 constexpr std::array<const char*, 3> axisLetters{"x", "y", "z"};
-
-QString levelPolicyText(const LinePlotCurve& curve)
-{
-    return curve.composition == CompositionPolicy::FinestAvailable
-        ? QStringLiteral("Finest")
-        : QStringLiteral("L%1").arg(curve.maximumLevel);
-}
 
 std::size_t sampleCount(const LinePlotCurve& curve)
 {
@@ -76,6 +65,12 @@ void LinePlotWidget::setNumberFormat(QString format)
 void LinePlotWidget::resetZoom()
 {
     m_zoom.reset();
+    update();
+}
+
+void LinePlotWidget::setShowMarkers(bool on)
+{
+    m_showMarkers = on;
     update();
 }
 
@@ -133,6 +128,14 @@ std::optional<QRectF> LinePlotWidget::automaticRange() const
         yMinimum -= padding;
         yMaximum += padding;
     }
+    // Pad each axis so the data is not flush against the boundary.
+    constexpr double padFraction = 0.05;
+    const auto xSpan = xMaximum - xMinimum;
+    const auto ySpan = yMaximum - yMinimum;
+    xMinimum -= padFraction * xSpan;
+    xMaximum += padFraction * xSpan;
+    yMinimum -= padFraction * ySpan;
+    yMaximum += padFraction * ySpan;
     return QRectF(QPointF(xMinimum, yMinimum), QPointF(xMaximum, yMaximum));
 }
 
@@ -147,6 +150,7 @@ std::optional<QRectF> LinePlotWidget::displayedRange() const
 void LinePlotWidget::paintEvent(QPaintEvent* /*event*/)
 {
     QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
     painter.fillRect(rect(), viewportBackground());
     const auto range = displayedRange();
     if (!range.has_value()) {
@@ -218,6 +222,26 @@ void LinePlotWidget::paintEvent(QPaintEvent* /*event*/)
                 mapY(static_cast<double>(curve.line.values[sample]))));
         }
         flushRun();
+        if (m_showMarkers) {
+            // One marker per original sample at a fixed pixel size, raised just
+            // enough that the dot sits on the line (its lower edge touching),
+            // so it reads against the line without floating above it. The lift
+            // is in screen pixels, independent of the axis scaling/zoom.
+            constexpr qreal markerDiameter = 3.5;
+            constexpr qreal markerLift = markerDiameter / 2.0;
+            QPen markerPen(curve.color);
+            markerPen.setWidthF(markerDiameter);
+            markerPen.setCapStyle(Qt::RoundCap);
+            painter.setPen(markerPen);
+            for (std::size_t sample = 0; sample < count; ++sample) {
+                if (curve.line.valid[sample] == 0) {
+                    continue;
+                }
+                painter.drawPoint(QPointF(mapX(curve.line.positions[sample]),
+                    mapY(static_cast<double>(curve.line.values[sample]))
+                        - markerLift));
+            }
+        }
     }
     painter.restore();
 }
@@ -303,17 +327,16 @@ LinePlotWindow::LinePlotWindow(const QString& datasetName, QWidget* parent)
     m_legend->setMaximumWidth(260);
 
     auto* clearButton = new QPushButton(tr("Clear"), this);
-    auto* removeButton = new QPushButton(tr("Remove Selected"), this);
-    auto* exportButton = new QPushButton(tr("Export ASCII..."), this);
     auto* zoomButton = new QPushButton(tr("Reset Zoom"), this);
+    auto* markersBox = new QCheckBox(tr("Data Markers"), this);
+    markersBox->setChecked(false);
     auto* closeButton = new QPushButton(tr("Close"), this);
 
     auto* sideLayout = new QVBoxLayout;
     sideLayout->addWidget(m_legend);
     sideLayout->addWidget(clearButton);
-    sideLayout->addWidget(removeButton);
-    sideLayout->addWidget(exportButton);
     sideLayout->addWidget(zoomButton);
+    sideLayout->addWidget(markersBox);
     sideLayout->addStretch();
     sideLayout->addWidget(closeButton);
 
@@ -331,9 +354,8 @@ LinePlotWindow::LinePlotWindow(const QString& datasetName, QWidget* parent)
         m_plot->update();
     });
     connect(clearButton, &QPushButton::clicked, this, [this] { clearCurves(); });
-    connect(removeButton, &QPushButton::clicked, this, [this] { removeSelected(); });
-    connect(exportButton, &QPushButton::clicked, this, [this] { exportAscii(); });
     connect(zoomButton, &QPushButton::clicked, m_plot, &LinePlotWidget::resetZoom);
+    connect(markersBox, &QCheckBox::toggled, m_plot, &LinePlotWidget::setShowMarkers);
     connect(closeButton, &QPushButton::clicked, this, &QWidget::close);
 }
 
@@ -360,11 +382,10 @@ void LinePlotWindow::addCurve(LinePlotCurve curve)
 QString LinePlotWindow::curveDescription(const LinePlotCurve& curve) const
 {
     const auto fixed = static_cast<std::size_t>(curve.primaryFixedAxis);
-    return tr("%1 %2=%3 [%4]")
+    return tr("%1 %2=%3")
         .arg(QString::fromStdString(curve.fieldName))
         .arg(QLatin1String(axisLetters[fixed]))
-        .arg(curve.fixedCoordinates[fixed], 0, 'g', 6)
-        .arg(levelPolicyText(curve));
+        .arg(curve.fixedCoordinates[fixed], 0, 'g', 6);
 }
 
 void LinePlotWindow::clearCurves()
@@ -373,78 +394,6 @@ void LinePlotWindow::clearCurves()
     m_legend->clear();
     m_plot->resetZoom();
     m_plot->update();
-}
-
-void LinePlotWindow::removeSelected()
-{
-    std::vector<int> rows;
-    const auto selected = m_legend->selectedItems();
-    rows.reserve(static_cast<std::size_t>(selected.size()));
-    for (const auto* item : selected) {
-        rows.push_back(m_legend->row(item));
-    }
-    std::sort(rows.rbegin(), rows.rend());
-    for (const auto row : rows) {
-        if (row < 0 || static_cast<std::size_t>(row) >= m_curves.size()) {
-            continue;
-        }
-        m_curves.erase(m_curves.begin() + row);
-        delete m_legend->takeItem(row);
-    }
-    m_plot->update();
-}
-
-void LinePlotWindow::exportAscii()
-{
-    if (m_curves.empty()) {
-        QMessageBox::information(this, tr("No curves"),
-            tr("There are no line plot curves to export."));
-        return;
-    }
-    const auto filename = QFileDialog::getSaveFileName(this,
-        tr("Export line plot"), QString(), tr("ASCII text (*.txt);;All files (*)"));
-    if (filename.isEmpty()) {
-        return;
-    }
-    QFile file(filename);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QMessageBox::critical(this, tr("Cannot export line plot"),
-            tr("The file %1 could not be opened for writing.").arg(filename));
-        return;
-    }
-    QTextStream stream(&file);
-    for (const auto& curve : m_curves) {
-        QStringList fixedParts;
-        for (int axis = 0; axis < curve.dimension; ++axis) {
-            if (axis == curve.line.axis) {
-                continue;
-            }
-            const auto index = static_cast<std::size_t>(axis);
-            fixedParts << QStringLiteral("%1=%2")
-                .arg(QLatin1String(axisLetters[index]))
-                .arg(curve.fixedCoordinates[index], 0, 'g', 6);
-        }
-        stream << "# " << QString::fromStdString(curve.fieldName) << " "
-            << QLatin1String(axisLetters[static_cast<std::size_t>(curve.line.axis)])
-            << " fixed=" << fixedParts.join(QLatin1Char(','))
-            << " level=" << levelPolicyText(curve) << "\n";
-        const auto count = sampleCount(curve);
-        for (std::size_t sample = 0; sample < count; ++sample) {
-            if (curve.line.valid[sample] == 0) {
-                continue;
-            }
-            stream << QString::number(curve.line.positions[sample], 'g', 17) << " "
-                << QString::number(static_cast<double>(curve.line.values[sample]),
-                    'g', 9)
-                << "\n";
-        }
-        stream << "\n";
-    }
-    stream.flush();
-    if (stream.status() != QTextStream::Ok) {
-        QMessageBox::critical(this, tr("Cannot export line plot"),
-            tr("Writing to %1 failed.").arg(filename));
-    }
 }
 
 } // namespace amrvis::qt

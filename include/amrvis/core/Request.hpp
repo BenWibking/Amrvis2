@@ -5,6 +5,7 @@
 #include <array>
 #include <compare>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -63,6 +64,9 @@ struct LineRequest {
     std::array<double, 3> fixedCoordinates{};  // physical coords of the other axes
     int maximumLevel = 0;
     CompositionPolicy composition = CompositionPolicy::FinestAvailable;
+    // Optional extent along the line axis (from the viewport's visible region).
+    // When unset the line spans the full level domain.
+    std::optional<RealBox> region;
 };
 
 [[nodiscard]] std::vector<std::string> validateBlockRequest(const BlockRequest& request);

@@ -336,12 +336,9 @@ void ImageView::mouseReleaseEvent(QMouseEvent* event)
         if (!hasImage()) {
             return;
         }
+        // A plain middle/right click fires at the cursor (legacy Amrvis
+        // behavior); a deliberate drag still works and shows the aiming guide.
         const auto releasePosition = event->position().toPoint();
-        const auto drag = releasePosition - m_linePressPosition;
-        constexpr int minimumDrag = 4;
-        if (std::max(std::abs(drag.x()), std::abs(drag.y())) < minimumDrag) {
-            return;
-        }
         const auto imagePosition = m_item->mapFromScene(mapToScene(releasePosition));
         const auto x = std::clamp(static_cast<int>(std::floor(imagePosition.x())),
             0, m_image.width() - 1);
@@ -426,7 +423,12 @@ void ImageView::updateLineGuide(const QPoint& viewPosition)
     const auto width = static_cast<double>(m_image.width());
     const auto height = static_cast<double>(m_image.height());
     QLineF line;
-    if (m_lineDragButton == Qt::MiddleButton) {
+    // Line-plot drag: the guide runs along the sampled axis (middle samples x
+    // => horizontal, right samples y => vertical). 3-D slice-move drag: the
+    // guide marks the axis being moved, so it is perpendicular (middle moves x
+    // => vertical at that x, right moves y => horizontal at that y).
+    const auto middleButton = m_lineDragButton == Qt::MiddleButton;
+    if (middleButton != m_sliceMoveEnabled) {
         const auto y = std::clamp(scenePosition.y(), 0.0, height);
         line = QLineF(0.0, y, width, y);
     } else {

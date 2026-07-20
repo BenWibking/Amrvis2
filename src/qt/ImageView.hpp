@@ -74,7 +74,7 @@ public:
     void fitToWindow();
     void setFixedScale(int factor);
     void zoomToRect(const QRectF& sceneRect);
-    // When enabled (the 3-D slice views), a middle/right drag released
+    // When enabled (the 3-D slice views), a middle/right click (or drag)
     // without Shift or Control emits sliceMoveRequested instead of
     // linePlotRequested; with either modifier held it stays a line plot.
     void setSliceMoveEnabled(bool enabled) noexcept;

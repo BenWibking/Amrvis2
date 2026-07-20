@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -15,6 +16,14 @@ namespace {
 struct LoadedBlock {
     IntBox validBox;
     PlotfileDataset::BlockCache::Handle data;
+};
+
+// A covering cell hit during the line walk: which level won, the cell index,
+// and the cell-centered value there.
+struct Cover {
+    int level = 0;
+    Int3 point{};
+    float value = 0.0F;
 };
 
 bool intersects(const IntBox& left, const IntBox& right, int dimension)
@@ -130,30 +139,40 @@ LineQueryResult LineQuery::execute(
     const auto maximumLevel = std::min(request.maximumLevel, metadata.finestLevel);
     const auto minimumLevel = request.composition == CompositionPolicy::ExactLevel
         ? maximumLevel : 0;
-    const auto& samplingLevel = metadata.levels[static_cast<std::size_t>(maximumLevel)];
     const auto lineAxis = static_cast<std::size_t>(request.axis);
+    const auto& samplingLevel = metadata.levels[static_cast<std::size_t>(maximumLevel)];
 
-    const auto cellCount = static_cast<std::int64_t>(samplingLevel.domain.upper[lineAxis])
+    // Physical extent of the line along its axis: the viewport region when the
+    // caller supplied one (a subregion line plot), otherwise the maximumLevel's
+    // full domain.
+    const auto domainExtent = static_cast<std::int64_t>(samplingLevel.domain.upper[lineAxis])
         - samplingLevel.domain.lower[lineAxis] + 1;
-    if (cellCount <= 0
-        || static_cast<std::uint64_t>(cellCount)
+    if (domainExtent <= 0
+        || static_cast<std::uint64_t>(domainExtent)
             > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
         throw std::overflow_error("line sample count exceeds addressable memory");
     }
-    const auto sampleCount = static_cast<std::size_t>(cellCount);
+    const auto domainStart = metadata.physicalDomain.lower[lineAxis];
+    const auto domainEnd = domainStart
+        + static_cast<double>(domainExtent) * samplingLevel.cellSize[lineAxis];
+    const auto physicalStart = request.region.has_value()
+        ? request.region->lower[lineAxis] : domainStart;
+    const auto physicalEnd = request.region.has_value()
+        ? request.region->upper[lineAxis] : domainEnd;
+    const auto finestCellSize = samplingLevel.cellSize[lineAxis];
 
     LineQueryResult result;
     result.line.axis = request.axis;
-    result.line.positions.resize(sampleCount);
-    result.line.values.assign(sampleCount, 0.0F);
-    result.line.valid.assign(sampleCount, 0);
-    result.line.sourceLevel.assign(sampleCount, -1);
-    for (std::size_t sample = 0; sample < sampleCount; ++sample) {
-        result.line.positions[sample] = metadata.physicalDomain.lower[lineAxis]
-            + (static_cast<double>(sample) + 0.5) * samplingLevel.cellSize[lineAxis];
-    }
+    const auto maxSamples = static_cast<std::size_t>(domainExtent);
+    result.line.positions.reserve(maxSamples);
+    result.line.values.reserve(maxSamples);
+    result.line.valid.reserve(maxSamples);
+    result.line.sourceLevel.reserve(maxSamples);
 
-    for (int levelIndex = maximumLevel; levelIndex >= minimumLevel; --levelIndex) {
+    // Pre-load every block the line crosses, per participating level.
+    std::vector<std::vector<LoadedBlock>> loadedByLevel(
+        static_cast<std::size_t>(maximumLevel) + 1);
+    for (int levelIndex = minimumLevel; levelIndex <= maximumLevel; ++levelIndex) {
         if (cancellation.stop_requested()) {
             throw ReadCancelled();
         }
@@ -169,8 +188,7 @@ LineQueryResult LineQuery::execute(
             lineBox.lower[i] = index;
             lineBox.upper[i] = index;
         }
-
-        std::vector<LoadedBlock> loaded;
+        auto& loaded = loadedByLevel[static_cast<std::size_t>(levelIndex)];
         for (std::size_t grid = 0; grid < level.blocks.size(); ++grid) {
             const auto& block = level.blocks[grid];
             if (!intersects(block.box, lineBox, metadata.dimension)) {
@@ -191,28 +209,21 @@ LineQueryResult LineQuery::execute(
             }
             loaded.push_back({block.box, std::move(access.handle)});
         }
+    }
 
-        for (std::size_t sample = 0; sample < sampleCount; ++sample) {
-            if ((sample & 31U) == 0U && cancellation.stop_requested()) {
-                throw ReadCancelled();
-            }
-            if (result.line.valid[sample] != 0) {
-                continue;
-            }
-
-            Real3 position;
-            for (int axis = 0; axis < metadata.dimension; ++axis) {
-                position[static_cast<std::size_t>(axis)] =
-                    request.fixedCoordinates[static_cast<std::size_t>(axis)];
-            }
-            position[lineAxis] = result.line.positions[sample];
-
-            Int3 point;
+    // Find the finest level covering position x (fine overrides coarse).
+    const auto findCovering = [&](double x, Cover& cover) -> bool {
+        for (int levelIndex = maximumLevel; levelIndex >= minimumLevel; --levelIndex) {
+            const auto& level = metadata.levels[static_cast<std::size_t>(levelIndex)];
+            Int3 point{};
             for (int axis = 0; axis < metadata.dimension; ++axis) {
                 point[static_cast<std::size_t>(axis)] = physicalToIndex(
-                    position[static_cast<std::size_t>(axis)], metadata, level, axis);
+                    axis == request.axis
+                        ? x
+                        : request.fixedCoordinates[static_cast<std::size_t>(axis)],
+                    metadata, level, axis);
             }
-            for (const auto& block : loaded) {
+            for (const auto& block : loadedByLevel[static_cast<std::size_t>(levelIndex)]) {
                 if (!contains(block.validBox, point, metadata.dimension)) {
                     continue;
                 }
@@ -220,11 +231,63 @@ LineQueryResult LineQuery::execute(
                 if (offset >= block.data->values.size()) {
                     throw std::runtime_error("composed FAB index exceeds loaded block");
                 }
-                result.line.values[sample] = static_cast<float>(block.data->values[offset]);
-                result.line.valid[sample] = 1;
-                result.line.sourceLevel[sample] = static_cast<std::int16_t>(levelIndex);
-                break;
+                cover.level = levelIndex;
+                cover.point = point;
+                cover.value = static_cast<float>(block.data->values[offset]);
+                return true;
             }
+        }
+        return false;
+    };
+
+    // Walk the line at native resolution: emit the finest covering cell, then
+    // step to its far boundary. One sample per actual cell means no flat coarse
+    // steps, so a multi-level composite draws as a smooth line over non-uniform
+    // points. Uncovered stretches (ExactLevel outside coverage, or out of
+    // domain) become invalid samples so the polyline breaks there.
+    auto x = physicalStart;
+    constexpr double endEpsilon = 1e-9;
+    while (x < physicalEnd - endEpsilon) {
+        if ((result.line.positions.size() & 31U) == 0U
+            && cancellation.stop_requested()) {
+            throw ReadCancelled();
+        }
+        Cover cover;
+        if (findCovering(x, cover)) {
+            const auto& level = metadata.levels[static_cast<std::size_t>(cover.level)];
+            const auto relative = static_cast<double>(
+                cover.point[lineAxis] - level.domain.lower[lineAxis]);
+            const auto center = metadata.physicalDomain.lower[lineAxis]
+                + (relative + 0.5) * level.cellSize[lineAxis];
+            if (center >= physicalStart - endEpsilon && center <= physicalEnd + endEpsilon) {
+                result.line.positions.push_back(center);
+                result.line.values.push_back(cover.value);
+                result.line.valid.push_back(1);
+                result.line.sourceLevel.push_back(static_cast<std::int16_t>(cover.level));
+            }
+            x = metadata.physicalDomain.lower[lineAxis]
+                + (relative + 1.0) * level.cellSize[lineAxis];
+        } else {
+            Int3 point{};
+            for (int axis = 0; axis < metadata.dimension; ++axis) {
+                point[static_cast<std::size_t>(axis)] = physicalToIndex(
+                    axis == request.axis
+                        ? x
+                        : request.fixedCoordinates[static_cast<std::size_t>(axis)],
+                    metadata, samplingLevel, axis);
+            }
+            const auto relative = static_cast<double>(
+                point[lineAxis] - samplingLevel.domain.lower[lineAxis]);
+            const auto center = metadata.physicalDomain.lower[lineAxis]
+                + (relative + 0.5) * finestCellSize;
+            if (center >= physicalStart - endEpsilon && center <= physicalEnd + endEpsilon) {
+                result.line.positions.push_back(center);
+                result.line.values.push_back(0.0F);
+                result.line.valid.push_back(0);
+                result.line.sourceLevel.push_back(-1);
+            }
+            x = metadata.physicalDomain.lower[lineAxis]
+                + (relative + 1.0) * finestCellSize;
         }
     }
     return result;

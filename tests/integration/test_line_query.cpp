@@ -112,9 +112,19 @@ void test2d(const std::filesystem::path& source, const std::filesystem::path& wo
 
     const auto composite = lines.execute(request);
     require(composite.line.axis == 0, "line result axis mismatch");
-    require(composite.line.positions.size() == 8, "line sample count mismatch");
-    require(composite.line.values.size() == 8 && composite.line.valid.size() == 8
-            && composite.line.sourceLevel.size() == 8,
+    // Native composite sampling emits one sample per actual cell: coarse cell 0
+    // over [0, 0.25), fine cells 2-5 over [0.25, 0.75), coarse cell 3 over
+    // [0.75, 1.0). Six samples total, with no flat coarse steps.
+    struct NativeSample { double position; float value; int level; };
+    const std::vector<NativeSample> native = {
+        {0.125, 1.0F, 0}, {0.3125, 3.0F, 1}, {0.4375, 3.5F, 1},
+        {0.5625, 4.0F, 1}, {0.6875, 4.5F, 1}, {0.875, 2.5F, 0},
+    };
+    require(composite.line.positions.size() == native.size(),
+        "native composite sample count mismatch");
+    require(composite.line.values.size() == native.size()
+            && composite.line.valid.size() == native.size()
+            && composite.line.sourceLevel.size() == native.size(),
         "line result arrays disagree in size");
     require(composite.metrics.candidateBlocks == 3,
         "line query did not consider all three intersecting blocks");
@@ -123,18 +133,14 @@ void test2d(const std::filesystem::path& source, const std::filesystem::path& wo
     require(composite.metrics.payloadBytesRead > 0
             && composite.metrics.payloadBytesRead * 2 < payloadBytes,
         "line query payload accounting is not far below the full dataset");
-    for (std::size_t sample = 0; sample < 8; ++sample) {
-        const auto s = static_cast<double>(sample);
-        require(composite.line.positions[sample] == (s + 0.5) * 0.125,
-            "line sample is not at a fine cell center");
-        const bool fine = sample >= 2 && sample <= 5;
-        const auto expected = static_cast<float>(
-            fine ? 0.5 * (s + 4.0) : 0.5 * (std::floor(s / 2.0) + 2.0));
-        require(composite.line.valid[sample] == 1, "composite line left a coarse hole");
-        require(composite.line.values[sample] == expected,
-            "fine-over-coarse line value mismatch");
-        require(composite.line.sourceLevel[sample] == (fine ? 1 : 0),
-            "line source-level mask mismatch");
+    for (std::size_t i = 0; i < native.size(); ++i) {
+        require(composite.line.positions[i] == native[i].position,
+            "native composite position mismatch");
+        require(composite.line.valid[i] == 1, "native composite left a hole");
+        require(composite.line.values[i] == native[i].value,
+            "native composite value mismatch");
+        require(composite.line.sourceLevel[i] == native[i].level,
+            "native composite source-level mismatch");
     }
 
     const auto cached = lines.execute(request);
@@ -142,9 +148,9 @@ void test2d(const std::filesystem::path& source, const std::filesystem::path& wo
         "repeated line query did not reuse all three blocks");
     require(cached.metrics.payloadBytesRead == 0, "cached line query performed payload I/O");
 
-    // Cross-check against a slice whose single pixel row covers the same cells:
-    // pixel centers fall at y = 0.5625, inside fine cell j = 4 / coarse cell j = 2,
-    // matching the line's fixed y = 0.5.
+    // Cross-check against a slice whose single pixel row covers the same cells.
+    // The slice composites on a uniform 8-pixel grid, so each native line
+    // sample must agree with the slice cell that contains its position.
     amrvis::SliceQuery slices(dataset);
     amrvis::SliceRequest sliceRequest;
     sliceRequest.dataset.value = 11;
@@ -154,17 +160,21 @@ void test2d(const std::filesystem::path& source, const std::filesystem::path& wo
     sliceRequest.maximumLevel = 1;
     sliceRequest.outputSize = {8, 1};
     const auto plane = slices.execute(sliceRequest);
-    for (std::size_t sample = 0; sample < 8; ++sample) {
-        require(plane.plane.valid[sample] == composite.line.valid[sample]
-                && plane.plane.values[sample] == composite.line.values[sample]
-                && plane.plane.sourceLevel[sample] == composite.line.sourceLevel[sample],
+    constexpr double sliceCellSize = 0.125;
+    for (std::size_t i = 0; i < native.size(); ++i) {
+        const auto cell = static_cast<std::size_t>(
+            std::floor(composite.line.positions[i] / sliceCellSize));
+        require(cell < 8, "native composite position outside the slice row");
+        require(plane.plane.valid[cell] == composite.line.valid[i]
+                && plane.plane.values[cell] == composite.line.values[i]
+                && plane.plane.sourceLevel[cell] == composite.line.sourceLevel[i],
             "line and slice disagree on their common row");
     }
 
     // The second field shares the grids with an offset of 100.
     request.field.value = 1;
     const auto temperature = lines.execute(request);
-    for (std::size_t sample = 0; sample < 8; ++sample) {
+    for (std::size_t sample = 0; sample < composite.line.values.size(); ++sample) {
         require(temperature.line.values[sample] == 100.0F + composite.line.values[sample],
             "second field line value mismatch");
     }
@@ -226,13 +236,17 @@ void test2d(const std::filesystem::path& source, const std::filesystem::path& wo
     require(vertical.metrics.payloadBytesRead > 0
             && vertical.metrics.payloadBytesRead * 8 < payloadBytes,
         "line along y did not read far below the full dataset");
-    for (std::size_t sample = 0; sample < 8; ++sample) {
+    // The line at x = 0.125 misses the fine grid (i = 1), so the native walk
+    // emits one sample per coarse cell along y: four level-0 cell centers.
+    require(vertical.line.positions.size() == 4,
+        "line along y native sample count mismatch");
+    for (std::size_t sample = 0; sample < 4; ++sample) {
         const auto s = static_cast<double>(sample);
-        require(vertical.line.positions[sample] == (s + 0.5) * 0.125,
+        require(vertical.line.positions[sample] == (s + 0.5) * 0.25,
             "line along y position mismatch");
         require(vertical.line.valid[sample] == 1 && vertical.line.sourceLevel[sample] == 0,
             "line along y unexpectedly used the fine grid");
-        require(vertical.line.values[sample] == static_cast<float>(0.5 * std::floor(s / 2.0)),
+        require(vertical.line.values[sample] == static_cast<float>(0.5 * s),
             "line along y value mismatch");
     }
 
