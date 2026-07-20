@@ -2242,10 +2242,18 @@ void MainWindow::exportImage()
     }
     const bool includeColorBar = choice.clickedButton() == withBar;
 
-    const auto filename = QFileDialog::getSaveFileName(
+    auto filename = QFileDialog::getSaveFileName(
         this, tr("Export scalar image"), QString(), tr("PNG image (*.png)"));
     if (filename.isEmpty()) {
         return;
+    }
+    // The PNG-only save dialog does not auto-append an extension on Linux, so a
+    // bare "velx" would be written with no suffix. Ensure the name ends in .png
+    // so the file is recognizable: "velx" -> "velx.png", "velx.png"/"velx.PNG"
+    // unchanged, and a non-image suffix is kept but made valid ("velx.1" ->
+    // "velx.1.png").
+    if (!filename.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive)) {
+        filename += QStringLiteral(".png");
     }
 
     // composedImage() carries grid boxes (and overlays) when on; the color bar
