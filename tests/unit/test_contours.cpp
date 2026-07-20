@@ -169,6 +169,27 @@ int main()
     const auto nanSegments = amrvis::generateContours(withNaN, {7.5});
     require(nanSegments.empty(), "non-finite corner was not skipped");
 
+    // A uniform field is effectively constant, so it has no meaningful
+    // iso-lines: generateContours must return nothing for it whether the
+    // requested level matches the value exactly or not, and the same holds
+    // once chained into polylines. (Without the degenerate-range guard the
+    // level matching the value marks every cell edge as crossed and tiles the
+    // plane with spurious saddle segments.)
+    amrvis::ScalarPlane constant;
+    constant.width = 4;
+    constant.height = 4;
+    constant.values.assign(16, 3.5F);
+    constant.valid.assign(16, 1);
+    constant.sourceLevel.assign(16, 0);
+    require(amrvis::generateContours(constant, {3.5}).empty(),
+        "constant field contoured at its own value produced segments");
+    require(amrvis::generateContours(constant, {3.5001}).empty(),
+        "constant field produced segments for an off-value");
+    const auto constantPolylines =
+        amrvis::generateContourPolylines(constant, {3.5}, 0);
+    require(constantPolylines.empty(),
+        "constant field produced contour polylines");
+
     // (a) A radial field contoured at r^2 = 100 chains into a single closed
     // polyline. The r = 10 circle around (15.5, 15.5) stays inside the
     // 32x32 plane and never passes exactly through a corner.
