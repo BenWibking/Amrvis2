@@ -42,13 +42,21 @@ std::pair<int, int> detectVectorFields(const std::vector<std::string>& fieldName
     };
 
     auto uField = containsIgnoreCase("x_velocity");
-    if (uField < 0) {
-        uField = findExact("u");
-    }
+    if (uField < 0) uField = containsIgnoreCase("x-velocity");
+    if (uField < 0) uField = containsIgnoreCase("velx");
+    if (uField < 0) uField = containsIgnoreCase("x_vel");
+    if (uField < 0) uField = containsIgnoreCase("v_x");
+    if (uField < 0) uField = findExact("vx");
+    if (uField < 0) uField = findExact("u");
+    if (uField < 0) uField = findExact("xvel");
     auto vField = containsIgnoreCase("y_velocity");
-    if (vField < 0) {
-        vField = findExact("v");
-    }
+    if (vField < 0) vField = containsIgnoreCase("y-velocity");
+    if (vField < 0) vField = containsIgnoreCase("vely");
+    if (vField < 0) vField = containsIgnoreCase("y_vel");
+    if (vField < 0) vField = containsIgnoreCase("v_y");
+    if (vField < 0) vField = findExact("vy");
+    if (vField < 0) vField = findExact("v");
+    if (vField < 0) vField = findExact("yvel");
     if (fieldNames.empty()) {
         return {0, 0};
     }
@@ -122,18 +130,39 @@ SetContoursDialog::SetContoursDialog(const std::vector<std::string>& fieldNames,
     }
     vectorLayout->addRow(tr("U field:"), m_uField);
     vectorLayout->addRow(tr("V field:"), m_vField);
+    auto* vectorWarning = new QLabel(
+        tr("U and V fields must be different"), m_vectorBox);
+    vectorWarning->setStyleSheet("QLabel { color: red; }");
+    vectorWarning->setVisible(false);
+    vectorLayout->addRow(vectorWarning);
+    const auto checkVectorFields = [this, vectorWarning] {
+        const bool conflict = m_uField->currentIndex() == m_vField->currentIndex();
+        vectorWarning->setVisible(conflict);
+    };
+    connect(m_uField, qOverload<int>(&QComboBox::currentIndexChanged),
+        this, [checkVectorFields](int) { checkVectorFields(); });
+    connect(m_vField, qOverload<int>(&QComboBox::currentIndexChanged),
+        this, [checkVectorFields](int) { checkVectorFields(); });
     layout->addWidget(m_vectorBox);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok
         | QDialogButtonBox::Apply | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::clicked, this,
-        [this, buttons](QAbstractButton* button) {
+        [this, buttons, vectorWarning](QAbstractButton* button) {
             const auto role = buttons->buttonRole(button);
-            if (role == QDialogButtonBox::AcceptRole) {
+            if (role == QDialogButtonBox::AcceptRole
+                || role == QDialogButtonBox::ApplyRole) {
+                if (m_uField->currentIndex() == m_vField->currentIndex()
+                    && m_modeButtons->checkedId()
+                        == static_cast<int>(DisplayMode::VelocityVectors)
+                    && m_uField->count() > 1) {
+                    vectorWarning->setVisible(true);
+                    return;
+                }
                 emit applied();
-                accept();
-            } else if (role == QDialogButtonBox::ApplyRole) {
-                emit applied();
+                if (role == QDialogButtonBox::AcceptRole) {
+                    accept();
+                }
             } else {
                 reject();
             }

@@ -362,20 +362,26 @@ SliceDisplayResult executeSlice(const std::shared_ptr<PlotfileDataset>& dataset,
     return result;
 }
 
-// Vector mode renders the U component's raster and derives arrow glyphs from
-// both component planes; the V slice shares the U request's region, level,
-// and output size so the two planes line up sample for sample.
+// Vector mode queries the U- and V-component planes independently and
+// derives arrow glyphs from them. Both slices share the raster request's
+// region, level, and output size so the planes line up sample for sample.
 void appendVectorGlyphs(const std::shared_ptr<PlotfileDataset>& dataset,
-    SliceRequest request, FieldId vField, int count,
+    SliceRequest request, FieldId uField, FieldId vField, int count,
     std::stop_token cancellation, SliceDisplayResult& result)
 {
+    request.field = uField;
+    auto uSlice = SliceQuery(*dataset).execute(request, cancellation);
     request.field = vField;
     auto vSlice = SliceQuery(*dataset).execute(request, cancellation);
-    result.vectors = generateVectorGlyphs(result.slice.plane, vSlice.plane, count);
-    result.slice.metrics.candidateBlocks += vSlice.metrics.candidateBlocks;
-    result.slice.metrics.blocksRead += vSlice.metrics.blocksRead;
-    result.slice.metrics.cacheHits += vSlice.metrics.cacheHits;
-    result.slice.metrics.payloadBytesRead += vSlice.metrics.payloadBytesRead;
+    result.vectors = generateVectorGlyphs(uSlice.plane, vSlice.plane, count);
+    result.slice.metrics.candidateBlocks += uSlice.metrics.candidateBlocks
+        + vSlice.metrics.candidateBlocks;
+    result.slice.metrics.blocksRead += uSlice.metrics.blocksRead
+        + vSlice.metrics.blocksRead;
+    result.slice.metrics.cacheHits += uSlice.metrics.cacheHits
+        + vSlice.metrics.cacheHits;
+    result.slice.metrics.payloadBytesRead += uSlice.metrics.payloadBytesRead
+        + vSlice.metrics.payloadBytesRead;
 }
 
 [[nodiscard]] bool isContourMode(DisplayMode mode)
@@ -652,8 +658,7 @@ InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
         const auto normal = normals[entry];
         SliceRequest request;
         request.dataset = datasetId;
-        request.field = FieldId{spec.displayMode == DisplayMode::VelocityVectors
-            ? std::min(spec.vectorUField, fieldCount - 1) : field};
+        request.field = FieldId{field};
         request.normalDirection = normal;
         // A preserved zoom region is clipped to the new frame's domain; if
         // it no longer intersects at all, fall back to the whole domain.
@@ -694,6 +699,7 @@ InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
         }
         if (spec.displayMode == DisplayMode::VelocityVectors) {
             appendVectorGlyphs(result.dataset, request,
+                FieldId{std::min(spec.vectorUField, fieldCount - 1)},
                 FieldId{std::min(spec.vectorVField, fieldCount - 1)},
                 spec.contourCount, cancellation, display);
         }
@@ -1417,8 +1423,6 @@ void MainWindow::applyContourSettings(
     m_vectorVField = vField;
     m_contourColor = contourColor;
     saveSettings();
-
-    // Contour polylines are re-extracted from the cached data-resolution
     // planes on the worker, and the raster never depends on the contour
     // mode or count, so these changes request with rasterDirty = false;
     // requestSlice satisfies them from the cache whenever the slice spec is
@@ -1531,7 +1535,10 @@ void MainWindow::ensureVectorFieldDefaults()
     for (const auto& field : fields) {
         fieldNames.push_back(field.name);
     }
-    const auto [uField, vField] = detectVectorFields(fieldNames);
+    auto [uField, vField] = detectVectorFields(fieldNames);
+    if (uField == vField && count > 1) {
+        vField = (uField == 0) ? 1 : 0;
+    }
     m_vectorUField = uField;
     m_vectorVField = vField;
 }
@@ -1902,9 +1909,7 @@ void MainWindow::linePlotRequested(PlaneViewState& state, int imageX, int imageY
     const auto level = m_levelSelector->currentData().toInt();
     const auto [composition, maximumLevel] = decodeLevelData(
         level, metadata.finestLevel);
-    const auto field = m_displayMode == DisplayMode::VelocityVectors
-        ? static_cast<std::uint32_t>(std::max(m_vectorUField, 0))
-        : m_fieldSelector->currentData().toUInt();
+    const auto field = m_fieldSelector->currentData().toUInt();
     const auto slicePosition = metadata.dimension == 3
         ? m_slicePosition3d[static_cast<std::size_t>(state.normal)] : 0.0;
     const auto request = makeLineRequest(plane.physicalRegion,
@@ -2497,9 +2502,7 @@ std::optional<DatasetRequest> MainWindow::buildDatasetRequest() const
     const auto& metadata = m_dataset->metadata();
     DatasetRequest request;
     request.dataset = m_dataset;
-    request.field.value = m_displayMode == DisplayMode::VelocityVectors
-        ? static_cast<std::uint32_t>(std::max(m_vectorUField, 0))
-        : m_fieldSelector->currentData().toUInt();
+    request.field.value = m_fieldSelector->currentData().toUInt();
     request.fieldName = QString::fromStdString(
         metadata.fields[request.field.value].name);
     // The "selected region" is the active view's visible region: the
@@ -2961,9 +2964,7 @@ void MainWindow::requestSlice(PlaneViewState& state, bool rasterDirty)
     const auto& metadata = dataset->metadata();
     SliceRequest request;
     request.dataset = dataset->id();
-    request.field.value = m_displayMode == DisplayMode::VelocityVectors
-        ? static_cast<std::uint32_t>(std::max(m_vectorUField, 0))
-        : m_fieldSelector->currentData().toUInt();
+    request.field.value = m_fieldSelector->currentData().toUInt();
     request.normalDirection = state.normal;
     if (metadata.dimension == 3) {
         request.physicalPosition
@@ -2986,6 +2987,8 @@ void MainWindow::requestSlice(PlaneViewState& state, bool rasterDirty)
     const auto logarithmic = m_logarithmic->isChecked();
     const auto palette = m_palette;
     const auto displayMode = m_displayMode;
+    const auto vectorUField = static_cast<std::uint32_t>(
+        std::max(m_vectorUField, 0));
     const auto vectorVField = static_cast<std::uint32_t>(
         std::max(m_vectorVField, 0));
     const auto contourCount = m_contourCount;
@@ -3028,7 +3031,7 @@ void MainWindow::requestSlice(PlaneViewState& state, bool rasterDirty)
             contourFineFactor = state.contourFineFactor,
             vectors = state.vectorSegments,
             rangeMode, userRange, logarithmic, palette, displayMode,
-            vectorVField, contourCount, rasterDirty]() mutable {
+            vectorUField, vectorVField, contourCount, rasterDirty]() mutable {
             return refreshCachedSlice(dataset, request, std::move(displayPlane),
                 std::move(contourPlane), std::move(contourFinePlane),
                 contourFineFactor, std::move(vectors), rangeMode, userRange,
@@ -3038,7 +3041,8 @@ void MainWindow::requestSlice(PlaneViewState& state, bool rasterDirty)
     } else {
         future = QtConcurrent::run(
             [dataset, request, rangeMode, userRange, logarithmic, palette,
-                cancellation, displayMode, vectorVField, contourCount] {
+                cancellation, displayMode, vectorUField, vectorVField,
+                contourCount] {
             auto result = executeSlice(dataset, request, rangeMode,
                 userRange, logarithmic, palette, cancellation);
             result.mode = displayMode;
@@ -3049,8 +3053,8 @@ void MainWindow::requestSlice(PlaneViewState& state, bool rasterDirty)
                     result.maximum, cancellation, result);
             }
             if (displayMode == DisplayMode::VelocityVectors) {
-                appendVectorGlyphs(dataset, request, FieldId{vectorVField},
-                    contourCount, cancellation, result);
+                appendVectorGlyphs(dataset, request, FieldId{vectorUField},
+                    FieldId{vectorVField}, contourCount, cancellation, result);
             }
             return result;
         });
