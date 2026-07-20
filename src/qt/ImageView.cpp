@@ -243,6 +243,20 @@ const QImage& ImageView::image() const noexcept
     return m_image;
 }
 
+QImage ImageView::composedImage() const
+{
+    if (m_image.isNull()) {
+        return {};
+    }
+    QImage out(m_image.size(), QImage::Format_ARGB32_Premultiplied);
+    out.fill(Qt::transparent);
+    QPainter painter(&out);
+    // Render the whole scene (pixmap + grid boxes + overlays) from the image's
+    // own pixel rect, so the export matches the on-screen composition 1:1.
+    m_scene->render(&painter, QRectF(out.rect()), QRectF(m_image.rect()));
+    return out;
+}
+
 void ImageView::fitToWindow()
 {
     if (hasImage()) {

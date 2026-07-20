@@ -6,7 +6,7 @@ namespace amrvis::qt {
 
 QString defaultNumberFormat()
 {
-    return QStringLiteral("%7.5f");
+    return QStringLiteral("%g");
 }
 
 bool isValidNumberFormat(const QString& format)

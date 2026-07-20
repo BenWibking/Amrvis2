@@ -4,7 +4,9 @@
 
 namespace amrvis::qt {
 
-// The legacy Amrvis default readout format (View -> Number Format...).
+// The default readout format for the color bar / probe (View -> Number Format...
+// to change it). %g keeps significant digits and switches to exponent form for
+// very large/small magnitudes; its widest output is 13 chars (e.g. -1.23456e-308).
 QString defaultNumberFormat();
 
 // True when format is a printf-style string carrying exactly one

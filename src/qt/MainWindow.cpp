@@ -7,6 +7,7 @@
 #include "LinePlotRequest.hpp"
 #include "LinePlotWindow.hpp"
 #include "SetContoursDialog.hpp"
+#include "Theme.hpp"
 
 #include <amrvis/io/PlotfileDataset.hpp>
 #include <amrvis/io/StandaloneMetadataReader.hpp>
@@ -45,6 +46,7 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
+#include <QRect>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QStackedWidget>
@@ -67,7 +69,6 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <iomanip>
 #include <limits>
 #include <map>
 #include <memory>
@@ -1039,10 +1040,6 @@ void MainWindow::createMenus()
     auto* exportAction = new QAction(tr("&Export Image..."), this);
     connect(exportAction, &QAction::triggered, this, [this] { exportImage(); });
 
-    auto* exportDataAction = new QAction(tr("Export Slice &Data (ASCII)..."), this);
-    connect(exportDataAction, &QAction::triggered,
-        this, [this] { exportSliceData(); });
-
     auto* quitAction = new QAction(tr("&Quit"), this);
     quitAction->setShortcut(QKeySequence::Quit);
     connect(quitAction, &QAction::triggered, this, &QWidget::close);
@@ -1056,7 +1053,6 @@ void MainWindow::createMenus()
     fileMenu->addAction(openMultiFabAction);
     fileMenu->addSeparator();
     fileMenu->addAction(exportAction);
-    fileMenu->addAction(exportDataAction);
     fileMenu->addSeparator();
     fileMenu->addAction(quitAction);
 
@@ -2089,84 +2085,61 @@ void MainWindow::exportImage()
             tr("Open a dataset before exporting an image."));
         return;
     }
-    const auto filename = QFileDialog::getSaveFileName(
-        this, tr("Export scalar image"), QString(), tr("PNG image (*.png)"));
-    if (!filename.isEmpty() && !view->image().save(filename, "PNG")) {
-        QMessageBox::critical(this, tr("Cannot export image"),
-            tr("The image could not be written to %1.").arg(filename));
-    }
-}
 
-void MainWindow::exportSliceData()
-{
-    const auto* state = m_activeView;
-    if (state == nullptr || state->plane.width <= 0 || state->plane.height <= 0) {
-        QMessageBox::information(this, tr("No slice"),
-            tr("Display a slice before exporting slice data."));
+    // Offer the color-bar choice up front; Cancel aborts before the file dialog.
+    QMessageBox choice(this);
+    choice.setIcon(QMessageBox::Question);
+    choice.setWindowTitle(tr("Export Image"));
+    choice.setText(tr("Include the color bar in the exported image?"));
+    auto* withBar = choice.addButton(tr("&With color bar"),
+        QMessageBox::AcceptRole);
+    auto* withoutBar = choice.addButton(tr("With&out color bar"),
+        QMessageBox::AcceptRole);
+    choice.addButton(QMessageBox::Cancel);
+    choice.exec();
+    if (choice.clickedButton() != withBar && choice.clickedButton() != withoutBar) {
         return;
     }
-    const auto filename = QFileDialog::getSaveFileName(this,
-        tr("Export slice data (ASCII)"), QString(),
-        tr("ASCII text (*.txt);;All files (*)"));
+    const bool includeColorBar = choice.clickedButton() == withBar;
+
+    const auto filename = QFileDialog::getSaveFileName(
+        this, tr("Export scalar image"), QString(), tr("PNG image (*.png)"));
     if (filename.isEmpty()) {
         return;
     }
 
-    const auto& plane = state->plane;
-    const auto axes = displayAxes(state->normal);
-    const auto xAxis = static_cast<std::size_t>(axes[0]);
-    const auto yAxis = static_cast<std::size_t>(axes[1]);
-    const auto& region = plane.physicalRegion;
-    constexpr std::array<const char*, 3> axisNames{"x", "y", "z"};
-
-    std::ofstream output(filename.toStdString(), std::ios::trunc);
-    if (!output) {
-        QMessageBox::critical(this, tr("Cannot export slice data"),
-            tr("The slice data could not be written to %1.").arg(filename));
+    // composedImage() carries grid boxes (and overlays) when on; the color bar
+    // is optional and composited alongside when requested.
+    const QImage scalar = view->composedImage();
+    if (scalar.isNull()) {
+        QMessageBox::critical(this, tr("Cannot export image"),
+            tr("The image could not be composited."));
         return;
     }
-    output << "# Amrvis2 slice data export\n";
-    output << "# dataset: " << m_datasetPath.string() << '\n';
-    output << "# field: " << state->fieldName.toStdString() << '\n';
-    if (m_viewDimension == 3) {
-        const auto normal = static_cast<std::size_t>(state->normal);
-        output << "# normal: " << axisNames[normal] << " (in-plane axes: "
-            << axisNames[xAxis] << ' ' << axisNames[yAxis] << ")\n";
-        output << "# slice position: " << axisNames[normal] << " = "
-            << std::setprecision(12) << m_slicePosition3d[normal] << '\n';
-    } else {
-        output << "# normal: 2-D (in-plane axes: " << axisNames[xAxis] << ' '
-            << axisNames[yAxis] << ")\n";
-    }
-    output << "# display range: [" << std::setprecision(9) << state->displayMinimum
-        << ", " << state->displayMaximum << ']'
-        << (state->displayLogarithmic ? " (log)\n" : "\n");
-    output << "# columns: " << axisNames[xAxis] << ' ' << axisNames[yAxis]
-        << " value valid sourceLevel\n";
 
-    // Same pixel-center mapping the probe readout uses (see probeMoved);
-    // plane row 0 is the bottom row of the displayed image.
-    for (int y = 0; y < plane.height; ++y) {
-        const auto physicalY = region.lower[yAxis]
-            + (static_cast<double>(y) + 0.5) / static_cast<double>(plane.height)
-                * (region.upper[yAxis] - region.lower[yAxis]);
-        for (int x = 0; x < plane.width; ++x) {
-            const auto physicalX = region.lower[xAxis]
-                + (static_cast<double>(x) + 0.5) / static_cast<double>(plane.width)
-                    * (region.upper[xAxis] - region.lower[xAxis]);
-            const auto offset = static_cast<std::size_t>(x)
-                + static_cast<std::size_t>(plane.width)
-                    * static_cast<std::size_t>(y);
-            output << std::setprecision(12) << physicalX << ' ' << physicalY << ' '
-                << std::setprecision(9) << static_cast<double>(plane.values[offset])
-                << ' ' << static_cast<int>(plane.valid[offset]) << ' '
-                << plane.sourceLevel[offset] << '\n';
+    QImage composite;
+    if (includeColorBar) {
+        constexpr int gap = 8;
+        const int barWidth = m_colorBar->preferredWidth();
+        composite = QImage(QSize(scalar.width() + gap + barWidth, scalar.height()),
+            QImage::Format_ARGB32_Premultiplied);
+        {
+            QPainter painter(&composite);
+            // Match the widget font so the labels render at the width
+            // preferredWidth measured, keeping the panel edge tight.
+            painter.setFont(m_colorBar->font());
+            painter.fillRect(composite.rect(), viewportBackground());
+            painter.drawImage(0, 0, scalar);
+            m_colorBar->paintBar(&painter,
+                QRect(scalar.width() + gap, 0, barWidth, composite.height()));
         }
+    } else {
+        composite = scalar;
     }
-    output.flush();
-    if (!output) {
-        QMessageBox::critical(this, tr("Cannot export slice data"),
-            tr("The slice data could not be written to %1.").arg(filename));
+
+    if (!composite.save(filename, "PNG")) {
+        QMessageBox::critical(this, tr("Cannot export image"),
+            tr("The image could not be written to %1.").arg(filename));
     }
 }
 

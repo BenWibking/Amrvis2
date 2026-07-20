@@ -210,7 +210,6 @@ private:
     // "Open New Window" menu action; it shares no view/cache state with this one.
     MainWindow* createNewWindow();
     void exportImage();
-    void exportSliceData();
     void createMenus();
     void rebuildLevelMenu();
     void syncMenuChecks();
