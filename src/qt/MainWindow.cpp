@@ -756,7 +756,8 @@ MainWindow::MainWindow(QWidget* parent)
     m_stack->setCurrentIndex(0);
     setCentralWidget(m_stack);
 
-    auto* sliceToolbar = addToolBar(tr("Slice Controls"));
+    m_sliceToolbar = addToolBar(tr("Slice Controls"));
+    auto* sliceToolbar = m_sliceToolbar;
     sliceToolbar->setMovable(false);
     sliceToolbar->addWidget(new QLabel(tr("Field:"), sliceToolbar));
     m_fieldSelector = new QComboBox(sliceToolbar);
@@ -801,7 +802,8 @@ MainWindow::MainWindow(QWidget* parent)
     sliceToolbar->addWidget(m_slicePositionControls);
     m_slicePositionControls->setVisible(false);
     addToolBarBreak(Qt::TopToolBarArea);
-    auto* rangeToolbar = addToolBar(tr("Color and Overlay Controls"));
+    m_rangeToolbar = addToolBar(tr("Color and Overlay Controls"));
+    auto* rangeToolbar = m_rangeToolbar;
     rangeToolbar->setMovable(false);
     rangeToolbar->addWidget(new QLabel(tr("Range:"), rangeToolbar));
     m_rangeMode = new QComboBox(rangeToolbar);
@@ -974,7 +976,10 @@ MainWindow::MainWindow(QWidget* parent)
     createMenus();
 
     connect(m_fieldSelector, qOverload<int>(&QComboBox::currentIndexChanged),
-        this, [this](int) { syncMenuChecks(); });
+        this, [this](int) {
+            syncMenuChecks();
+            syncVariableMenu();
+        });
     connect(m_levelSelector, qOverload<int>(&QComboBox::currentIndexChanged),
         this, [this](int) { syncMenuChecks(); });
     connect(m_rangeMode, qOverload<int>(&QComboBox::currentIndexChanged),
@@ -1196,6 +1201,10 @@ void MainWindow::createMenus()
     viewMenu->addAction(m_datasetAction);
     viewMenu->addAction(numberFormatAction);
     viewMenu->addSeparator();
+    // Toolbar visibility toggles.
+    viewMenu->addAction(m_sliceToolbar->toggleViewAction());
+    viewMenu->addAction(m_rangeToolbar->toggleViewAction());
+    viewMenu->addSeparator();
     // Panel visibility toggles. Color Scale is visible by default; Dataset
     // Metadata and Diagnostics start hidden, and Animation is auto-shown for
     // 3-D datasets and plotfile sequences.
@@ -1203,6 +1212,10 @@ void MainWindow::createMenus()
     viewMenu->addAction(m_colorBarDock->toggleViewAction());
     viewMenu->addAction(m_diagnosticsDock->toggleViewAction());
     viewMenu->addAction(m_animationDock->toggleViewAction());
+
+    // Variable menu: lists all fields with a bullet on the active one.
+    m_variableMenu = menuBar()->addMenu(tr("&Variable"));
+    m_variableGroup = new QActionGroup(this);
 
     auto* helpMenu = menuBar()->addMenu(tr("&Help"));
     auto* referenceAction = new QAction(tr("&Keyboard && Mouse..."), this);
@@ -1286,6 +1299,48 @@ void MainWindow::syncMenuChecks()
     const auto levelActions = m_levelMenu->actions();
     for (auto* action : levelActions) {
         action->setChecked(action->data().toInt() == currentData);
+    }
+}
+
+void MainWindow::rebuildVariableMenu()
+{
+    m_variableMenu->clear();
+    if (!m_dataset) {
+        m_variableMenu->setEnabled(false);
+        return;
+    }
+    m_variableMenu->setEnabled(true);
+    const auto& metadata = m_dataset->metadata();
+    const auto currentField = m_fieldSelector->currentIndex() >= 0
+        ? m_fieldSelector->currentData().toUInt() : 0;
+    for (std::size_t field = 0; field < metadata.fields.size(); ++field) {
+        const auto name = QString::fromStdString(metadata.fields[field].name);
+        auto* action = m_variableMenu->addAction(name);
+        action->setCheckable(true);
+        action->setActionGroup(m_variableGroup);
+        action->setChecked(static_cast<std::uint32_t>(field) == currentField);
+        action->setData(static_cast<unsigned int>(field));
+        connect(action, &QAction::triggered, this, [this, field] {
+            const auto index = m_fieldSelector->findData(
+                static_cast<unsigned int>(field));
+            if (index >= 0) {
+                m_fieldSelector->setCurrentIndex(index);
+            }
+        });
+    }
+}
+
+void MainWindow::syncVariableMenu()
+{
+    if (!m_dataset) {
+        return;
+    }
+    const auto currentField = m_fieldSelector->currentIndex() >= 0
+        ? m_fieldSelector->currentData().toUInt() : 0;
+    const auto actions = m_variableMenu->actions();
+    for (int i = 0; i < actions.size(); ++i) {
+        actions[i]->setChecked(
+            static_cast<std::uint32_t>(i) == currentField);
     }
 }
 
@@ -2908,6 +2963,8 @@ void MainWindow::configureSliceControls()
     m_contoursAction->setEnabled(true);
     m_datasetAction->setEnabled(true);
 
+    rebuildVariableMenu();
+
     // Switch the stacked page to match the dataset dimension and, for 3-D,
     // reveal the shared slice position controls and the iso wireframe.
     const auto isThreeDimensional = metadata.dimension == 3;
@@ -3729,6 +3786,7 @@ void MainWindow::configureSequenceControls(bool defaultPositions)
     m_contoursAction->setEnabled(true);
     m_datasetAction->setEnabled(true);
     m_exportAnimationAction->setEnabled(true);
+    rebuildVariableMenu();
     ensureVectorFieldDefaults();
 }
 

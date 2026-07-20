@@ -225,7 +225,9 @@ private:
     [[nodiscard]] bool probeFfmpeg() const;
     void createMenus();
     void rebuildLevelMenu();
+    void rebuildVariableMenu();
     void syncMenuChecks();
+    void syncVariableMenu();
     void syncPaletteChecks();
     void syncPaletteSelector();
     void selectBuiltinPalette(int index);
@@ -371,8 +373,12 @@ private:
     QDockWidget* m_diagnosticsDock = nullptr;
     QDockWidget* m_colorBarDock = nullptr;
     QDockWidget* m_animationDock = nullptr;
+    QToolBar* m_sliceToolbar = nullptr;
+    QToolBar* m_rangeToolbar = nullptr;
     QMenu* m_levelMenu = nullptr;
+    QMenu* m_variableMenu = nullptr;
     QActionGroup* m_levelGroup = nullptr;
+    QActionGroup* m_variableGroup = nullptr;
     QActionGroup* m_paletteGroup = nullptr;
     QAction* m_boxesAction = nullptr;
     QAction* m_fitScaleAction = nullptr;
