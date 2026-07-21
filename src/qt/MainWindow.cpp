@@ -52,6 +52,7 @@
 #include <QPushButton>
 #include <QRect>
 #include <QSettings>
+#include <QShortcut>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStackedWidget>
@@ -243,15 +244,36 @@ std::pair<double, double> finiteRange(const ScalarPlane& plane)
 // executeSlice and the re-render-from-cache path, which must agree exactly.
 std::pair<double, double> resolveRange(
     const std::shared_ptr<PlotfileDataset>& dataset, FieldId field,
-    int maximumLevel, RangeMode rangeMode,
+    int maximumLevel, CompositionPolicy composition, RangeMode rangeMode,
     const std::optional<std::pair<double, double>>& userRange,
     bool logarithmic, const ScalarPlane& plane)
 {
     auto selectedRange = userRange;
     if (rangeMode == RangeMode::Level || rangeMode == RangeMode::File) {
-        const auto statistics = metadataValueRange(dataset->metadata(), field,
-            rangeMode == RangeMode::Level
-                ? std::optional<int>(maximumLevel) : std::nullopt);
+        std::optional<ValueRange> statistics;
+        if (rangeMode == RangeMode::File) {
+            statistics = metadataValueRange(dataset->metadata(),
+                field, std::nullopt);
+        } else if (composition == CompositionPolicy::ExactLevel) {
+            statistics = metadataValueRange(dataset->metadata(),
+                field, maximumLevel);
+        } else {
+            // Composite view (FinestAvailable): scan all levels that
+            // contribute data, 0..maximumLevel.
+            auto minimum = std::numeric_limits<double>::infinity();
+            auto maximum = -std::numeric_limits<double>::infinity();
+            for (int lev = 0; lev <= maximumLevel; ++lev) {
+                const auto s = metadataValueRange(dataset->metadata(),
+                    field, lev);
+                if (s) {
+                    minimum = std::min(minimum, s->minimum);
+                    maximum = std::max(maximum, s->maximum);
+                }
+            }
+            if (std::isfinite(minimum)) {
+                statistics = ValueRange{minimum, maximum};
+            }
+        }
         if (!statistics) {
             throw std::runtime_error(
                 "the selected dataset does not provide this metadata range");
@@ -321,21 +343,21 @@ struct ResolvedRange {
 
 ResolvedRange resolveDisplayRange(
     const std::shared_ptr<PlotfileDataset>& dataset, FieldId field,
-    int maximumLevel, RangeMode rangeMode,
+    int maximumLevel, CompositionPolicy composition, RangeMode rangeMode,
     const std::optional<std::pair<double, double>>& userRange,
     bool logarithmic, const ScalarPlane& plane)
 {
     if (logarithmic) {
         try {
             const auto [minimum, maximum] = resolveRange(dataset, field,
-                maximumLevel, rangeMode, userRange, true, plane);
+                maximumLevel, composition, rangeMode, userRange, true, plane);
             return {minimum, maximum, true};
         } catch (const std::exception&) {
             // Log is not viable for this range; fall back to linear below.
         }
     }
     const auto [minimum, maximum] = resolveRange(dataset, field, maximumLevel,
-        rangeMode, userRange, false, plane);
+        composition, rangeMode, userRange, false, plane);
     return {minimum, maximum, false};
 }
 
@@ -349,8 +371,8 @@ SliceDisplayResult executeSlice(const std::shared_ptr<PlotfileDataset>& dataset,
     result.request = request;
     result.slice = SliceQuery(*dataset).execute(request, cancellation);
     const auto range = resolveDisplayRange(dataset, request.field,
-        request.maximumLevel, rangeMode, userRange, logarithmic,
-        result.slice.plane);
+        request.maximumLevel, request.composition, rangeMode, userRange,
+        logarithmic, result.slice.plane);
     result.minimum = range.minimum;
     result.maximum = range.maximum;
     result.logarithmic = range.logarithmic;
@@ -536,8 +558,8 @@ SliceDisplayResult refreshCachedSlice(
     result.contourCount = contourCount;
     result.slice.plane = std::move(displayPlane);
     const auto range = resolveDisplayRange(dataset, request.field,
-        request.maximumLevel, rangeMode, userRange, logarithmic,
-        result.slice.plane);
+        request.maximumLevel, request.composition, rangeMode, userRange,
+        logarithmic, result.slice.plane);
     result.minimum = range.minimum;
     result.maximum = range.maximum;
     result.logarithmic = range.logarithmic;
@@ -981,6 +1003,10 @@ MainWindow::MainWindow(QWidget* parent)
     m_sliceDebounce->setSingleShot(true);
     m_sliceDebounce->setInterval(100);
     connect(m_sliceDebounce, &QTimer::timeout, this, [this] { flushSliceRequests(); });
+    m_panDebounce = new QTimer(this);
+    m_panDebounce->setSingleShot(true);
+    m_panDebounce->setInterval(120);
+    connect(m_panDebounce, &QTimer::timeout, this, [this] { flushPanDrag(false); });
     connect(m_fieldSelector, qOverload<int>(&QComboBox::currentIndexChanged),
         this, [this](int index) {
             // Swap the per-field range snapshot before re-slicing. This only
@@ -1105,6 +1131,7 @@ MainWindow::MainWindow(QWidget* parent)
     for (auto& state : m_planeViews) {
         wireView(state);
     }
+    setupPanShortcuts();
 
     m_probeLabel = new QLabel(statusBar());
     statusBar()->addPermanentWidget(m_probeLabel);
@@ -1121,12 +1148,23 @@ MainWindow::MainWindow(QWidget* parent)
 void MainWindow::wireView(PlaneViewState& state)
 {
     auto* view = state.view;
+    view->setFocusPolicy(Qt::StrongFocus);
     connect(view, &ImageView::probeClicked, this,
         [this, &state](int x, int displayY) { probeClicked(state, x, displayY); });
     connect(view, &ImageView::probeMoved, this,
         [this, &state](int x, int displayY) { probeMoved(state, x, displayY); });
     connect(view, &ImageView::rubberBandSelected, this,
         [this, &state](const QRectF& sceneRect) { rubberBandZoom(state, sceneRect); });
+    connect(view, &ImageView::panDragBegan, this,
+        [this, &state] { beginPanDrag(state); });
+    connect(view, &ImageView::panDragMoved, this,
+        [this, &state](const QPointF& totalSceneDelta, const QPoint& viewportDelta) {
+            updatePanDrag(state, totalSceneDelta, viewportDelta);
+        });
+    connect(view, &ImageView::panDragEnded, this,
+        [this, &state](const QPointF& totalSceneDelta) {
+            endPanDrag(state, totalSceneDelta);
+        });
     connect(view, &ImageView::linePlotRequested, this,
         [this, &state](int x, int y, Qt::MouseButton button) {
             linePlotRequested(state, x, y, button);
@@ -1856,6 +1894,9 @@ void MainWindow::showKeyboardMouseReference()
     };
     add(tr("Left click"), tr("Probe the value under the cursor"));
     add(tr("Left drag"), tr("Zoom to the rubber-band subregion"));
+    add(tr("Shift+left drag"), tr("Pan the view; when zoomed into a subregion, "
+        "live-refreshes the visible data window while dragging"));
+    add(tr("Arrow keys"), tr("Pan the active panel (5% of the view per step)"));
     add(tr("Shift+click or drag (middle/right)"),
         tr("Line plot (drag direction picks horizontal or vertical)"));
     add(tr("Middle click (3-D)"),
@@ -2093,6 +2134,179 @@ void MainWindow::rubberBandZoom(PlaneViewState& state, const QRectF& sceneRect)
     state.visibleRegion = visible;
     state.view->zoomToRect(clamped);
     scheduleSliceRequest(state);
+}
+
+void MainWindow::beginPanDrag(PlaneViewState& state)
+{
+    setActiveView(state);
+    m_panView = &state;
+    m_panSceneDelta = QPointF();
+    m_panLastScheduledDelta = QPointF();
+    m_panDataRefresh = state.visibleRegion.has_value();
+    if (m_panDataRefresh) {
+        m_panStartRegion = *state.visibleRegion;
+        m_panPlaneWidth = state.plane.width;
+        m_panPlaneHeight = state.plane.height;
+    }
+}
+
+void MainWindow::updatePanDrag(PlaneViewState& state,
+    const QPointF& totalSceneDelta, const QPoint& viewportDelta)
+{
+    if (m_panView != &state) {
+        return;
+    }
+    m_panSceneDelta = totalSceneDelta;
+    constexpr int minimumDrag = 4;
+    if (std::max(std::abs(totalSceneDelta.x()),
+            std::abs(totalSceneDelta.y())) < minimumDrag) {
+        return;
+    }
+    if (m_panDataRefresh) {
+        if (!m_panDebounce->isActive()) {
+            flushPanDrag(false);
+            m_panDebounce->start();
+        }
+    } else {
+        state.view->panViewport(viewportDelta);
+    }
+}
+
+void MainWindow::endPanDrag(PlaneViewState& state, const QPointF& totalSceneDelta)
+{
+    m_panDebounce->stop();
+    if (m_panView != &state) {
+        return;
+    }
+    m_panSceneDelta = totalSceneDelta;
+    constexpr int minimumDrag = 4;
+    if (std::max(std::abs(totalSceneDelta.x()),
+            std::abs(totalSceneDelta.y())) >= minimumDrag
+        && m_panDataRefresh) {
+        flushPanDrag(true);
+    }
+    m_panView = nullptr;
+    m_panDataRefresh = false;
+}
+
+void MainWindow::flushPanDrag(bool finalize)
+{
+    if (!m_panView || !m_panDataRefresh || !m_dataset) {
+        return;
+    }
+    if (!finalize && m_panSceneDelta == m_panLastScheduledDelta) {
+        return;
+    }
+    const auto region = shiftedPanRegion(*m_panView, m_panStartRegion,
+        m_panPlaneWidth, m_panPlaneHeight, m_panSceneDelta);
+    if (!region.has_value()) {
+        if (finalize) {
+            m_panView->view->fitToWindow();
+        }
+        return;
+    }
+    m_panView->visibleRegion = *region;
+    m_panLastScheduledDelta = m_panSceneDelta;
+    if (finalize) {
+        m_panView->view->fitToWindow();
+        m_fitScaleAction->setChecked(true);
+        if (m_scaleButton != nullptr) {
+            m_scaleButton->setText(tr("Fit"));
+        }
+    }
+    scheduleSliceRequest(*m_panView, false);
+}
+
+void MainWindow::setupPanShortcuts()
+{
+    const auto bind = [this](Qt::Key key, double x, double y) {
+        auto* shortcut = new QShortcut(QKeySequence(key), this);
+        shortcut->setContext(Qt::WindowShortcut);
+        connect(shortcut, &QShortcut::activated, this, [this, x, y] {
+            if (m_activeView == nullptr || !m_activeView->view->hasImage()) {
+                return;
+            }
+            applyPanStep(*m_activeView, QPointF(x, y));
+        });
+    };
+    bind(Qt::Key_Left, 1.0, 0.0);
+    bind(Qt::Key_Right, -1.0, 0.0);
+    bind(Qt::Key_Up, 0.0, 1.0);
+    bind(Qt::Key_Down, 0.0, -1.0);
+}
+
+void MainWindow::applyPanStep(PlaneViewState& state, const QPointF& direction)
+{
+    if (!state.view->hasImage() || state.plane.width <= 0 || state.plane.height <= 0) {
+        return;
+    }
+    setActiveView(state);
+    const auto stepX = std::max(1.0, static_cast<double>(state.plane.width) * 0.05);
+    const auto stepY = std::max(1.0, static_cast<double>(state.plane.height) * 0.05);
+    const QPointF sceneDelta(direction.x() * stepX, direction.y() * stepY);
+
+    if (state.visibleRegion.has_value() && m_dataset) {
+        const auto region = shiftedPanRegion(state, *state.visibleRegion,
+            state.plane.width, state.plane.height, sceneDelta);
+        if (!region.has_value()) {
+            return;
+        }
+        state.visibleRegion = *region;
+        state.view->fitToWindow();
+        m_fitScaleAction->setChecked(true);
+        if (m_scaleButton != nullptr) {
+            m_scaleButton->setText(tr("Fit"));
+        }
+        scheduleSliceRequest(state, false);
+        return;
+    }
+
+    const auto scale = state.view->transform().m11();
+    state.view->panViewport(QPoint(
+        static_cast<int>(std::round(-sceneDelta.x() * scale)),
+        static_cast<int>(std::round(-sceneDelta.y() * scale))));
+}
+
+std::optional<RealBox> MainWindow::shiftedPanRegion(
+    const PlaneViewState& state, const RealBox& baseRegion,
+    int planeWidth, int planeHeight, const QPointF& sceneDelta) const
+{
+    if (!m_dataset || planeWidth <= 0 || planeHeight <= 0) {
+        return std::nullopt;
+    }
+    auto visible = baseRegion;
+    const auto axes = displayAxes(state.normal);
+    const auto xAxis = static_cast<std::size_t>(axes[0]);
+    const auto yAxis = static_cast<std::size_t>(axes[1]);
+    const auto& domain = m_dataset->metadata().physicalDomain;
+    const auto width = static_cast<double>(planeWidth);
+    const auto height = static_cast<double>(planeHeight);
+    const auto xExtent = visible.upper[xAxis] - visible.lower[xAxis];
+    const auto yExtent = visible.upper[yAxis] - visible.lower[yAxis];
+    auto deltaX = -sceneDelta.x() / width * xExtent;
+    auto deltaY = sceneDelta.y() / height * yExtent;
+
+    if (visible.lower[xAxis] + deltaX < domain.lower[xAxis]) {
+        deltaX = domain.lower[xAxis] - visible.lower[xAxis];
+    }
+    if (visible.upper[xAxis] + deltaX > domain.upper[xAxis]) {
+        deltaX = domain.upper[xAxis] - visible.upper[xAxis];
+    }
+    if (visible.lower[yAxis] + deltaY < domain.lower[yAxis]) {
+        deltaY = domain.lower[yAxis] - visible.lower[yAxis];
+    }
+    if (visible.upper[yAxis] + deltaY > domain.upper[yAxis]) {
+        deltaY = domain.upper[yAxis] - visible.upper[yAxis];
+    }
+    if (deltaX == 0.0 && deltaY == 0.0) {
+        return std::nullopt;
+    }
+
+    visible.lower[xAxis] += deltaX;
+    visible.upper[xAxis] += deltaX;
+    visible.lower[yAxis] += deltaY;
+    visible.upper[yAxis] += deltaY;
+    return visible;
 }
 
 void MainWindow::linePlotRequested(PlaneViewState& state, int imageX, int imageY,
@@ -3302,6 +3516,8 @@ void MainWindow::setSlicePosition(int axis, double value)
     }
     m_isoWidget->setSlicePositions(m_slicePosition3d[0], m_slicePosition3d[1],
         m_slicePosition3d[2]);
+    // The cached full-domain Visible range is now stale.
+    m_fullDomainRange.reset();
     // The other two views only need their crosshair guides redrawn; the view
     // normal to the moved axis gets a fresh (debounced) slice.
     updateCrosshairs();
@@ -3465,15 +3681,44 @@ void MainWindow::requestSlice(PlaneViewState& state, bool rasterDirty)
 
     auto* watcher = new QFutureWatcher<SliceDisplayResult>(this);
     connect(watcher, &QFutureWatcher<SliceDisplayResult>::finished, this,
-        [this, watcher, dataset, generation, sliceGeneration, cancellation, &state] {
+        [this, watcher, dataset, generation, sliceGeneration, cancellation,
+         &state, rangeMode] {
             --state.pendingRequests;
             --m_activeRequests;
             try {
                 auto result = watcher->result();
                 if (generation == m_generation
                     && sliceGeneration == state.sliceGeneration) {
+                    // Cache the full-domain range whenever we get a non-zoomed
+                    // Visible-range slice; reuse it for zoomed (subregion)
+                    // slices so the color bar stays stable during pan and zoom.
+                    const bool isFullDomain = !state.visibleRegion.has_value();
+                    if (!isFullDomain
+                        && rangeMode == RangeMode::Visible
+                        && m_fullDomainRange.has_value()
+                        && m_fullDomainRangeField.value
+                            == result.request.field.value
+                        && m_fullDomainRangeMaxLevel
+                            == result.request.maximumLevel
+                        && m_fullDomainRangeComposition
+                            == result.request.composition) {
+                        result.minimum = m_fullDomainRange->first;
+                        result.maximum = m_fullDomainRange->second;
+                    }
                     showSlice(state, result);
                     syncVisibleRanges();
+                    // Refresh the cache after syncVisibleRanges so the 3-D
+                    // union across all panels is captured.
+                    if (isFullDomain && rangeMode == RangeMode::Visible
+                        && state.plane.width > 0) {
+                        m_fullDomainRange = std::make_pair(
+                            state.displayMinimum, state.displayMaximum);
+                        m_fullDomainRangeField = result.request.field;
+                        m_fullDomainRangeMaxLevel
+                            = result.request.maximumLevel;
+                        m_fullDomainRangeComposition
+                            = result.request.composition;
+                    }
                     const auto cache = dataset->cacheMetrics();
                     m_cacheBudgetBytes = cache.budgetBytes;
                     m_cacheResidentBytes = cache.residentBytes;
@@ -3752,20 +3997,36 @@ void MainWindow::syncVisibleRanges()
         &m_planeViews[0], &m_planeViews[1], &m_planeViews[2]};
     const bool logarithmic = m_logarithmic->isChecked();
 
+    // Use the cached full-domain range when it is current, so the shared
+    // color bar stays stable during zoom and pan instead of tracking the
+    // subregion extrema of whichever panel just finished rendering.
+    const FieldId currentField{m_fieldSelector->currentData().toUInt()};
+    const auto rawLevel = m_levelSelector->currentData().toInt();
+    const auto [composition, maximumLevel] = decodeLevelData(
+        rawLevel, m_dataset->metadata().finestLevel);
     double globalMin = std::numeric_limits<double>::infinity();
     double globalMax = -std::numeric_limits<double>::infinity();
-    for (const auto* state : views) {
-        if (state->plane.width <= 0 || state->plane.height <= 0) {
-            continue;
-        }
-        for (std::size_t i = 0; i < state->plane.values.size(); ++i) {
-            if (state->plane.valid[i] == 0
-                || !std::isfinite(state->plane.values[i])) {
+    const bool useCachedRange = m_fullDomainRange.has_value()
+        && m_fullDomainRangeField.value == currentField.value
+        && m_fullDomainRangeMaxLevel == maximumLevel
+        && m_fullDomainRangeComposition == composition;
+    if (useCachedRange) {
+        globalMin = m_fullDomainRange->first;
+        globalMax = m_fullDomainRange->second;
+    } else {
+        for (const auto* state : views) {
+            if (state->plane.width <= 0 || state->plane.height <= 0) {
                 continue;
             }
-            const auto v = static_cast<double>(state->plane.values[i]);
-            globalMin = std::min(globalMin, v);
-            globalMax = std::max(globalMax, v);
+            for (std::size_t i = 0; i < state->plane.values.size(); ++i) {
+                if (state->plane.valid[i] == 0
+                    || !std::isfinite(state->plane.values[i])) {
+                    continue;
+                }
+                const auto v = static_cast<double>(state->plane.values[i]);
+                globalMin = std::min(globalMin, v);
+                globalMax = std::max(globalMax, v);
+            }
         }
     }
     if (!std::isfinite(globalMin) || !std::isfinite(globalMax)) {
@@ -4200,6 +4461,9 @@ void MainWindow::resetRangeState()
 {
     m_fieldRanges.clear();
     m_trackedField = 0;
+    m_fullDomainRange.reset();
+    m_fullDomainRangeField = {};
+    m_fullDomainRangeMaxLevel = -1;
     const QSignalBlocker modeBlocker(m_rangeMode);
     const QSignalBlocker minBlocker(m_rangeMinimum);
     const QSignalBlocker maxBlocker(m_rangeMaximum);

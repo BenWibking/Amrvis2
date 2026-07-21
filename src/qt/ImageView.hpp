@@ -77,6 +77,10 @@ public:
     void fitToWindow();
     void setFixedScale(int factor);
     void zoomToRect(const QRectF& sceneRect);
+    // Shift+left-drag pans the viewport (scroll bars, or the view transform
+    // when the scene fits the window). When zoomed into a subregion, the
+    // drag shifts the visible data window (see panDrag* signals).
+    void panViewport(const QPoint& delta);
     // When enabled (the 3-D slice views), a middle/right click (or drag)
     // without Shift or Control emits sliceMoveRequested instead of
     // linePlotRequested; with either modifier held it stays a line plot.
@@ -90,6 +94,12 @@ signals:
     void probeMoved(int x, int y);
     void probeClicked(int x, int y);
     void rubberBandSelected(const QRectF& sceneRect);
+    void panDragBegan();
+    // Total scene-coordinate offset since the drag began, plus the latest
+    // viewport-pixel step (for view-only panning).
+    void panDragMoved(const QPointF& totalSceneDelta, const QPoint& viewportDelta);
+    // Final total scene-coordinate offset when the drag ends.
+    void panDragEnded(const QPointF& totalSceneDelta);
     void linePlotRequested(int imageX, int imageY, Qt::MouseButton button);
     void sliceMoveRequested(int imageX, int imageY, Qt::MouseButton button);
     void fitRequested();
@@ -125,9 +135,12 @@ private:
     QString m_indicatorH;
     QString m_indicatorV;
     QPoint m_pressPosition;
+    QPoint m_lastPanPosition;
+    QPointF m_panAccumulated;
     Qt::MouseButton m_lineDragButton = Qt::NoButton;
     QPoint m_linePressPosition;
     bool m_lineDragShiftHeld = false;
+    bool m_panActive = false;
     QGraphicsLineItem* m_lineGuide = nullptr;
     bool m_sliceMoveEnabled = false;
     bool m_fitOnResize = true;

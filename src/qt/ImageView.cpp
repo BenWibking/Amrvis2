@@ -10,6 +10,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QResizeEvent>
+#include <QScrollBar>
 #include <QWheelEvent>
 #include <QPen>
 
@@ -388,6 +389,28 @@ void ImageView::zoomToRect(const QRectF& sceneRect)
     fitInView(sceneRect, Qt::KeepAspectRatio);
 }
 
+void ImageView::panViewport(const QPoint& delta)
+{
+    if (!hasImage() || (delta.x() == 0 && delta.y() == 0)) {
+        return;
+    }
+    m_fitOnResize = false;
+    auto* const hBar = horizontalScrollBar();
+    auto* const vBar = verticalScrollBar();
+    if (hBar->maximum() > hBar->minimum()
+        || vBar->maximum() > vBar->minimum()) {
+        hBar->setValue(hBar->value() - delta.x());
+        vBar->setValue(vBar->value() - delta.y());
+        return;
+    }
+    const auto sx = transform().m11();
+    const auto sy = transform().m22();
+    if (sx == 0.0 || sy == 0.0) {
+        return;
+    }
+    translate(delta.x() / sx, delta.y() / sy);
+}
+
 void ImageView::mouseDoubleClickEvent(QMouseEvent* event)
 {
     if (hasImage()) {
@@ -403,6 +426,17 @@ void ImageView::mousePressEvent(QMouseEvent* event)
 {
     if (event->button() == Qt::LeftButton) {
         m_pressPosition = event->position().toPoint();
+        if (hasImage() && (event->modifiers() & Qt::ShiftModifier)) {
+            m_panActive = true;
+            m_lastPanPosition = event->position().toPoint();
+            m_panAccumulated = QPointF();
+            m_fitOnResize = false;
+            setCursor(Qt::ClosedHandCursor);
+            emit panDragBegan();
+            event->accept();
+            return;
+        }
+        m_panActive = false;
     }
     bool handled = false;
     if ((event->button() == Qt::MiddleButton || event->button() == Qt::RightButton)
@@ -424,6 +458,14 @@ void ImageView::mousePressEvent(QMouseEvent* event)
 
 void ImageView::mouseReleaseEvent(QMouseEvent* event)
 {
+    if (m_panActive && event->button() == Qt::LeftButton) {
+        m_panActive = false;
+        unsetCursor();
+        emit panDragEnded(m_panAccumulated);
+        m_panAccumulated = QPointF();
+        event->accept();
+        return;
+    }
     const bool wasLineDrag = event->button() == m_lineDragButton
         && m_lineDragButton != Qt::NoButton;
     if (!wasLineDrag) {
@@ -485,6 +527,15 @@ void ImageView::mouseReleaseEvent(QMouseEvent* event)
 
 void ImageView::mouseMoveEvent(QMouseEvent* event)
 {
+    if (m_panActive && (event->buttons() & Qt::LeftButton)) {
+        const QPoint current = event->position().toPoint();
+        const QPoint delta = current - m_lastPanPosition;
+        m_panAccumulated += mapToScene(current) - mapToScene(m_lastPanPosition);
+        m_lastPanPosition = current;
+        emit panDragMoved(m_panAccumulated, delta);
+        event->accept();
+        return;
+    }
     QGraphicsView::mouseMoveEvent(event);
     if (!hasImage()) {
         return;

@@ -279,6 +279,16 @@ private:
     [[nodiscard]] QString probeReadout(
         const PlaneViewState& state, int x, int displayY) const;
     void rubberBandZoom(PlaneViewState& state, const QRectF& sceneRect);
+    void beginPanDrag(PlaneViewState& state);
+    void updatePanDrag(PlaneViewState& state, const QPointF& totalSceneDelta,
+        const QPoint& viewportDelta);
+    void endPanDrag(PlaneViewState& state, const QPointF& totalSceneDelta);
+    void flushPanDrag(bool finalize);
+    void applyPanStep(PlaneViewState& state, const QPointF& direction);
+    void setupPanShortcuts();
+    [[nodiscard]] std::optional<RealBox> shiftedPanRegion(
+        const PlaneViewState& state, const RealBox& baseRegion,
+        int planeWidth, int planeHeight, const QPointF& sceneDelta) const;
     void linePlotRequested(PlaneViewState& state, int imageX, int imageY,
         Qt::MouseButton button);
     void sliceMoveRequested(PlaneViewState& state, int imageX, int imageY,
@@ -382,6 +392,21 @@ private:
     QWidget* m_slicePositionControls = nullptr;
     std::array<QSpinBox*, 3> m_sliceSpinboxes{nullptr, nullptr, nullptr};
     QTimer* m_sliceDebounce = nullptr;
+    QTimer* m_panDebounce = nullptr;
+    PlaneViewState* m_panView = nullptr;
+    RealBox m_panStartRegion{};
+    int m_panPlaneWidth = 0;
+    int m_panPlaneHeight = 0;
+    QPointF m_panSceneDelta;
+    QPointF m_panLastScheduledDelta;
+    bool m_panDataRefresh = false;
+    // Full-domain range cache — kept current whenever a non-zoomed slice
+    // completes, and reused for RangeMode::Visible during zoom/pan so the
+    // color bar stays stable instead of tracking the subregion extrema.
+    std::optional<std::pair<double, double>> m_fullDomainRange;
+    FieldId m_fullDomainRangeField{};
+    int m_fullDomainRangeMaxLevel = -1;
+    CompositionPolicy m_fullDomainRangeComposition{};
     QTreeWidget* m_metadataTree = nullptr;
     QPlainTextEdit* m_diagnostics = nullptr;
     QDockWidget* m_metadataDock = nullptr;
