@@ -470,11 +470,11 @@ void ImageView::mouseReleaseEvent(QMouseEvent* event)
         return;
     }
     const auto imagePosition = m_item->mapFromScene(mapToScene(releasePosition));
-    const auto x = static_cast<int>(std::floor(imagePosition.x()));
-    const auto y = static_cast<int>(std::floor(imagePosition.y()));
-    if (x >= 0 && y >= 0 && x < m_image.width() && y < m_image.height()) {
-        emit probeClicked(x, y);
-    }
+    const auto x = std::clamp(static_cast<int>(std::floor(imagePosition.x())),
+        0, m_image.width() - 1);
+    const auto y = std::clamp(static_cast<int>(std::floor(imagePosition.y())),
+        0, m_image.height() - 1);
+    emit probeClicked(x, y);
 }
 
 void ImageView::mouseMoveEvent(QMouseEvent* event)
@@ -568,6 +568,16 @@ void ImageView::updateLineGuide(const QPoint& viewPosition)
         return;
     }
     showLineGuide(viewPosition);
+}
+
+void ImageView::setActiveBorder(bool active)
+{
+    if (active) {
+        setStyleSheet(QStringLiteral(
+            "QGraphicsView { border: 2px solid #ff8800; }"));
+    } else {
+        setStyleSheet(QString());
+    }
 }
 
 void ImageView::clearLineGuide()

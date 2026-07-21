@@ -81,6 +81,8 @@ public:
     // without Shift or Control emits sliceMoveRequested instead of
     // linePlotRequested; with either modifier held it stays a line plot.
     void setSliceMoveEnabled(bool enabled) noexcept;
+    // Highlight (or clear) a coloured border indicating the active panel.
+    void setActiveBorder(bool active);
     // Remove any temporary line-plot preview guide from the scene.
     void clearLineGuide();
 

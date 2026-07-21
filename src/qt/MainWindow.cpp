@@ -1155,7 +1155,13 @@ void MainWindow::setActiveView(PlaneViewState& state)
     if (m_activeView == &state) {
         return;
     }
+    if (m_activeView != nullptr && m_viewDimension == 3) {
+        m_activeView->view->setActiveBorder(false);
+    }
     m_activeView = &state;
+    if (m_viewDimension == 3) {
+        state.view->setActiveBorder(true);
+    }
     if (state.plane.width <= 0 || state.plane.height <= 0) {
         return;
     }
@@ -2037,7 +2043,6 @@ QString MainWindow::probeReadout(
 
 void MainWindow::probeMoved(PlaneViewState& state, int x, int displayY)
 {
-    setActiveView(state);
     m_probeLabel->setText(probeReadout(state, x, displayY));
 }
 
@@ -2847,8 +2852,9 @@ std::optional<DatasetRequest> MainWindow::buildDatasetRequest() const
     DatasetRequest request;
     request.dataset = m_dataset;
     request.field.value = m_fieldSelector->currentData().toUInt();
-    request.fieldName = QString::fromStdString(
-        metadata.fields[request.field.value].name);
+    request.fieldName = tr("%1 — %2").arg(m_activeView->label)
+        .arg(QString::fromStdString(
+            metadata.fields[request.field.value].name));
     // The "selected region" is the active view's visible region: the
     // rubber-band zoom, or the whole domain when fitted.
     request.region = m_activeView->plane.physicalRegion;
@@ -2985,6 +2991,9 @@ void MainWindow::openDataset(const std::filesystem::path& path, bool metadataOnl
     m_sliceDebounce->stop();
     m_controlsReady = false;
     m_viewDimension = 0;
+    if (m_activeView != nullptr) {
+        m_activeView->view->setActiveBorder(false);
+    }
     m_activeView = nullptr;
     m_dataset.reset();
     // Line plot curves are snapshots of this dataset; drop the window.
@@ -3087,8 +3096,8 @@ void MainWindow::requestInitialSlice(
     m_viewDimension = metadata.dimension;
     const auto views = currentViews();
     // The XY view starts out as the active one in 3-D.
-    m_activeView = m_viewDimension == 3
-        ? &m_planeViews[2] : &m_view2d;
+    setActiveView(m_viewDimension == 3
+        ? m_planeViews[2] : m_view2d);
     // Slice positions start at the domain midpoints (legacy behavior).
     for (std::size_t axis = 0; axis < 3; ++axis) {
         const auto lower = metadata.physicalDomain.lower[axis];
@@ -4125,7 +4134,7 @@ void MainWindow::configureSequenceControls(bool defaultPositions)
     // The active view must belong to the new dimension's view set.
     const auto views = currentViews();
     if (std::find(views.begin(), views.end(), m_activeView) == views.end()) {
-        m_activeView = isThreeDimensional ? &m_planeViews[2] : &m_view2d;
+        setActiveView(isThreeDimensional ? m_planeViews[2] : m_view2d);
     }
 
     m_controlsReady = true;
