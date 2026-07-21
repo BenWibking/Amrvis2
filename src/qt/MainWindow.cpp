@@ -23,6 +23,7 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -57,6 +58,7 @@
 #include <QStringList>
 #include <QStyleOptionComboBox>
 #include <QStyledItemDelegate>
+#include <QThreadPool>
 #include <QTimer>
 #include <QToolBar>
 #include <QTreeView>
@@ -997,6 +999,11 @@ MainWindow::MainWindow(QWidget* parent)
     statusBar()->showMessage(tr("No dataset open"));
     updateDiagnostics();
     restoreSettings();
+    // Cancel in-flight async work on any quit path (last-window close, Cmd-Q,
+    // menu Quit) so QThreadPool teardown does not block on an outstanding read
+    // and the process can exit promptly.
+    connect(qApp, &QCoreApplication::aboutToQuit, this,
+        &MainWindow::cancelInFlight);
 }
 
 void MainWindow::wireView(PlaneViewState& state)
@@ -2138,6 +2145,37 @@ void MainWindow::closeEvent(QCloseEvent* event)
     auto settings = makeSettings();
     settings.setValue(QStringLiteral("geometry"), saveGeometry());
     QMainWindow::closeEvent(event);
+}
+
+void MainWindow::cancelInFlight()
+{
+    // Application shutdown: stop the timers that resubmit work, request stop on
+    // every async task this window can launch, and clear the queued jobs from
+    // the global thread pool. The slice/prefetch/line-query/initial-load tasks
+    // run on QThreadPool::globalInstance() via QtConcurrent::run, and that
+    // pool's destructor calls waitForDone() with no timeout. A task caught
+    // mid-read holds the global AMReX I/O mutex and only re-checks its
+    // stop_token at the next chunk boundary (PlotfileBlockReader checks every
+    // 1 MiB / 4096 values), so unless it is told to stop the process lingers
+    // "not responding" at quit -- which is what made closing the window look
+    // like a hang. request_stop is the cooperative signal those tasks poll, so
+    // once set a running task bails promptly and teardown unblocks.
+    if (m_sliceDebounce != nullptr) {
+        m_sliceDebounce->stop();
+    }
+    if (m_playbackTimer != nullptr) {
+        m_playbackTimer->stop();
+    }
+    m_initialStopSource.request_stop();
+    m_prefetchStopSource.request_stop();
+    m_linePlotStopSource.request_stop();
+    m_view2d.stopSource.request_stop();
+    for (auto& state : m_planeViews) {
+        state.stopSource.request_stop();
+    }
+    if (auto* pool = QThreadPool::globalInstance()) {
+        pool->clear();
+    }
 }
 
 void MainWindow::restoreSettings()

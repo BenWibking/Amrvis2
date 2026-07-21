@@ -336,6 +336,11 @@ private:
     [[nodiscard]] FrameSliceSpec buildFrameSpec();
     void startPrefetch(int frameIndex);
     void discardPrefetch();
+    // Stop timers, request stop on every async task this window can launch,
+    // and clear queued thread-pool work. Wired to aboutToQuit so the process
+    // exits promptly instead of blocking QThreadPool teardown on an in-flight
+    // read that holds the global I/O mutex.
+    void cancelInFlight();
 
     QStackedWidget* m_stack = nullptr;
     IsoWidget* m_isoWidget = nullptr;
