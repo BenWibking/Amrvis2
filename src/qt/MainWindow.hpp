@@ -384,7 +384,7 @@ private:
     // field the range widgets currently represent; the field selector swaps
     // snapshots through this map when the user changes fields.
     struct FieldRange {
-        RangeMode mode = RangeMode::Visible;
+        RangeMode mode = RangeMode::File;
         std::optional<std::pair<double, double>> userRange;
     };
     std::unordered_map<std::uint32_t, FieldRange> m_fieldRanges;

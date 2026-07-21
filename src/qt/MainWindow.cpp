@@ -940,9 +940,9 @@ MainWindow::MainWindow(QWidget* parent)
     rangeToolbar->setMovable(false);
     rangeToolbar->addWidget(new QLabel(tr("Range:"), rangeToolbar));
     m_rangeMode = new QComboBox(rangeToolbar);
-    m_rangeMode->addItem(tr("Visible"), static_cast<int>(RangeMode::Visible));
-    m_rangeMode->addItem(tr("Level"), static_cast<int>(RangeMode::Level));
     m_rangeMode->addItem(tr("File"), static_cast<int>(RangeMode::File));
+    m_rangeMode->addItem(tr("Level"), static_cast<int>(RangeMode::Level));
+    m_rangeMode->addItem(tr("Visible"), static_cast<int>(RangeMode::Visible));
     m_rangeMode->addItem(tr("User"), static_cast<int>(RangeMode::User));
     rangeToolbar->addWidget(m_rangeMode);
     m_rangeMinimum = new QDoubleSpinBox(rangeToolbar);
@@ -2574,6 +2574,16 @@ void MainWindow::restoreSettings()
 void MainWindow::saveSettings()
 {
     auto settings = makeSettings();
+    // Boxes and contours are no longer restored on load, but we save them so
+    // any stale keys from older versions are overwritten.
+    settings.setValue(QStringLiteral("view/boxes"), m_boxesAction->isChecked());
+    settings.setValue(QStringLiteral("contours/mode"),
+        static_cast<int>(m_displayMode));
+    settings.setValue(QStringLiteral("contours/count"), m_contourCount);
+    settings.setValue(QStringLiteral("contours/color"), m_contourColor);
+    // Range mode is deliberately not persisted: the correct default (File)
+    // depends on the dataset and restoring a different mode from a previous
+    // session would produce unexpected color bars.
     settings.setValue(QStringLiteral("range/logarithmic"), m_logarithmic->isChecked());
     settings.setValue(QStringLiteral("palette/fromFile"), m_paletteFromFile);
     settings.setValue(QStringLiteral("palette/filePath"), m_paletteFilePath);
@@ -4419,7 +4429,8 @@ void MainWindow::applyFieldRange(std::uint32_t field)
         const QSignalBlocker modeBlocker(m_rangeMode);
         const QSignalBlocker minBlocker(m_rangeMinimum);
         const QSignalBlocker maxBlocker(m_rangeMaximum);
-        m_rangeMode->setCurrentIndex(static_cast<int>(range.mode));
+        m_rangeMode->setCurrentIndex(
+            m_rangeMode->findData(static_cast<int>(range.mode)));
         if (range.userRange.has_value()) {
             m_rangeMinimum->setValue(range.userRange->first);
             m_rangeMaximum->setValue(range.userRange->second);
