@@ -1,9 +1,11 @@
 # Installing Amrvis2
 
 Two options: build from source, or download a prebuilt AppImage.
-Only Ubuntu 24.04 is tested so far.
+Tested on Ubuntu 24.04 and macOS.
 
 ## Option 1: Build from source
+
+### Linux (Ubuntu)
 
 Install the dependencies:
 
@@ -11,13 +13,26 @@ Install the dependencies:
 sudo apt install g++ cmake ninja-build qt6-base-dev
 ```
 
+### macOS
+
+Install the dependencies with [Homebrew][]:
+
+```bash
+brew install cmake ninja qt6
+```
+
+[Homebrew]: https://brew.sh
+
 **Optional:** `ffmpeg` is needed to encode animation exports (MP4).
 
 ```bash
+# Ubuntu
 sudo apt install ffmpeg
+# macOS
+brew install ffmpeg
 ```
 
-Build:
+Build (both platforms):
 
 ```bash
 git clone https://github.com/WeiqunZhang/Amrvis2.git
