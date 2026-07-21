@@ -1239,8 +1239,8 @@ void MainWindow::createMenus()
         action->setActionGroup(scaleGroup);
         action->setShortcut(QKeySequence(Qt::Key_1 + static_cast<int>(index)));
         connect(action, &QAction::triggered, this, [this, factor] {
-            if (m_activeView != nullptr) {
-                m_activeView->view->setFixedScale(factor);
+            for (auto* state : currentViews()) {
+                state->view->setFixedScale(factor);
             }
         });
         scaleMenu->addAction(action);
