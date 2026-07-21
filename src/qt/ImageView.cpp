@@ -406,12 +406,15 @@ void ImageView::mousePressEvent(QMouseEvent* event)
     }
     if ((event->button() == Qt::MiddleButton || event->button() == Qt::RightButton)
         && hasImage()) {
-        // In 2-D there is no slice to move; only start the drag when the
-        // user is holding the line-plot modifier so the guide is meaningful.
+        // Right drag always starts a potential line plot; middle drag only
+        // in 3-D or with Shift (plain middle-click in 2-D does nothing).
         if (m_sliceMoveEnabled
-            || (event->modifiers() & (Qt::ShiftModifier))) {
+            || (event->modifiers() & Qt::ShiftModifier)
+            || event->button() == Qt::RightButton) {
             m_lineDragButton = event->button();
             m_linePressPosition = event->position().toPoint();
+            m_lineDragShiftHeld = event->modifiers() & Qt::ShiftModifier;
+            showLineGuide(event->position().toPoint());
         }
     }
     QGraphicsView::mousePressEvent(event);
@@ -422,26 +425,36 @@ void ImageView::mouseReleaseEvent(QMouseEvent* event)
     QGraphicsView::mouseReleaseEvent(event);
     if (event->button() == m_lineDragButton && m_lineDragButton != Qt::NoButton) {
         const auto button = m_lineDragButton;
+        const auto shiftHeld = m_lineDragShiftHeld;
         m_lineDragButton = Qt::NoButton;
-        clearLineGuide();
+        m_lineDragShiftHeld = false;
         if (!hasImage()) {
+            clearLineGuide();
             return;
         }
-        // A plain middle/right click fires at the cursor (legacy Amrvis
-        // behavior); a deliberate drag still works and shows the aiming guide.
         const auto releasePosition = event->position().toPoint();
         const auto imagePosition = m_item->mapFromScene(mapToScene(releasePosition));
         const auto x = std::clamp(static_cast<int>(std::floor(imagePosition.x())),
             0, m_image.width() - 1);
         const auto y = std::clamp(static_cast<int>(std::floor(imagePosition.y())),
             0, m_image.height() - 1);
-        const auto linePlotModifiers
-            = Qt::ShiftModifier;
-        if (m_sliceMoveEnabled
-            && (event->modifiers() & linePlotModifiers) == Qt::NoModifier) {
+        const auto drag = releasePosition - m_linePressPosition;
+        constexpr int lineDragThreshold = 6;
+        const bool wasDrag = std::abs(drag.x()) > lineDragThreshold
+            || std::abs(drag.y()) > lineDragThreshold;
+        if (m_sliceMoveEnabled && !shiftHeld && !wasDrag) {
+            clearLineGuide();
             emit sliceMoveRequested(x, y, button);
-        } else if (event->modifiers() & linePlotModifiers) {
-            emit linePlotRequested(x, y, button);
+        } else if (shiftHeld || wasDrag) {
+            // Leave the guide visible as a temporary preview while the line
+            // plot is computed asynchronously.
+            const auto effectiveButton = wasDrag
+                ? (std::abs(drag.x()) > std::abs(drag.y())
+                    ? Qt::MiddleButton : Qt::RightButton)
+                : button;
+            emit linePlotRequested(x, y, effectiveButton);
+        } else {
+            clearLineGuide();
         }
         return;
     }
@@ -503,23 +516,33 @@ void ImageView::wheelEvent(QWheelEvent* event)
     event->accept();
 }
 
-void ImageView::updateLineGuide(const QPoint& viewPosition)
+void ImageView::showLineGuide(const QPoint& viewPosition)
 {
-    const auto drag = viewPosition - m_linePressPosition;
-    constexpr int minimumDrag = 4;
-    if (std::max(std::abs(drag.x()), std::abs(drag.y())) < minimumDrag) {
-        return;
-    }
     const auto scenePosition = mapToScene(viewPosition);
     const auto width = static_cast<double>(m_image.width());
     const auto height = static_cast<double>(m_image.height());
+
+    // Decide the guide orientation.
+    // 3-D slice move (no Shift): guide is perpendicular to the moved axis.
+    // Line plot (Shift held, 2-D, or drag): guide follows the expected
+    // line direction — dominant drag axis when dragging, button otherwise.
+    bool horizontal;
+    if (m_sliceMoveEnabled && !m_lineDragShiftHeld) {
+        // Slice move: middle moves horizontal axis → guide is vertical at x.
+        horizontal = (m_lineDragButton != Qt::MiddleButton);
+    } else {
+        const auto drag = viewPosition - m_linePressPosition;
+        constexpr int orientThreshold = 8;
+        if (std::abs(drag.x()) > orientThreshold
+            || std::abs(drag.y()) > orientThreshold) {
+            horizontal = std::abs(drag.x()) > std::abs(drag.y());
+        } else {
+            horizontal = (m_lineDragButton == Qt::MiddleButton);
+        }
+    }
+
     QLineF line;
-    // Line-plot drag: the guide runs along the sampled axis (middle samples x
-    // => horizontal, right samples y => vertical). 3-D slice-move drag: the
-    // guide marks the axis being moved, so it is perpendicular (middle moves x
-    // => vertical at that x, right moves y => horizontal at that y).
-    const auto middleButton = m_lineDragButton == Qt::MiddleButton;
-    if (middleButton != m_sliceMoveEnabled) {
+    if (horizontal) {
         const auto y = std::clamp(scenePosition.y(), 0.0, height);
         line = QLineF(0.0, y, width, y);
     } else {
@@ -535,6 +558,16 @@ void ImageView::updateLineGuide(const QPoint& viewPosition)
     } else {
         m_lineGuide->setLine(line);
     }
+}
+
+void ImageView::updateLineGuide(const QPoint& viewPosition)
+{
+    const auto drag = viewPosition - m_linePressPosition;
+    constexpr int minimumDrag = 4;
+    if (std::max(std::abs(drag.x()), std::abs(drag.y())) < minimumDrag) {
+        return;
+    }
+    showLineGuide(viewPosition);
 }
 
 void ImageView::clearLineGuide()

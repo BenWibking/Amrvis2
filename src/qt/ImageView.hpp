@@ -81,6 +81,8 @@ public:
     // without Shift or Control emits sliceMoveRequested instead of
     // linePlotRequested; with either modifier held it stays a line plot.
     void setSliceMoveEnabled(bool enabled) noexcept;
+    // Remove any temporary line-plot preview guide from the scene.
+    void clearLineGuide();
 
 signals:
     void probeMoved(int x, int y);
@@ -101,8 +103,8 @@ protected:
 
 private:
     void fitImage();
+    void showLineGuide(const QPoint& viewPosition);
     void updateLineGuide(const QPoint& viewPosition);
-    void clearLineGuide();
     void applyCrosshairs();
 
     QGraphicsScene* m_scene = nullptr;
@@ -123,6 +125,7 @@ private:
     QPoint m_pressPosition;
     Qt::MouseButton m_lineDragButton = Qt::NoButton;
     QPoint m_linePressPosition;
+    bool m_lineDragShiftHeld = false;
     QGraphicsLineItem* m_lineGuide = nullptr;
     bool m_sliceMoveEnabled = false;
     bool m_fitOnResize = true;

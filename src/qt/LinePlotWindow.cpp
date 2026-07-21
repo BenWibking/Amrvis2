@@ -156,7 +156,8 @@ void LinePlotWidget::paintEvent(QPaintEvent* /*event*/)
     if (!range.has_value()) {
         painter.setPen(Qt::white);
         painter.drawText(rect(), Qt::AlignCenter,
-            tr("Middle-drag for a line along X, right-drag for a line along Y"));
+            tr("Shift+middle click or horizontal drag for X, "
+               "Shift+right click or vertical drag for Y"));
         return;
     }
     const auto plot = plotRect();

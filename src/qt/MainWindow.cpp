@@ -1843,14 +1843,12 @@ void MainWindow::showKeyboardMouseReference()
     };
     add(tr("Left click"), tr("Probe the value under the cursor"));
     add(tr("Left drag"), tr("Zoom to the rubber-band subregion"));
-    add(tr("Shift+middle click"), tr("Horizontal line plot"));
-    add(tr("Shift+right click"), tr("Vertical line plot"));
+    add(tr("Shift+click or drag (middle/right)"),
+        tr("Line plot (drag direction picks horizontal or vertical)"));
     add(tr("Middle click (3-D)"),
-        tr("Move the slice along the horizontal axis "
-           "(hold Shift for a line plot)"));
+        tr("Move the slice along the horizontal axis"));
     add(tr("Right click (3-D)"),
-        tr("Move the slice along the vertical axis "
-           "(hold Shift for a line plot)"));
+        tr("Move the slice along the vertical axis"));
     add(tr("Wheel / double click"), tr("Zoom in or out / refit to the window"));
     add(tr("B"), tr("Toggle AMR grid boxes"));
     add(tr("0"), tr("Fit to the window"));
@@ -2125,15 +2123,17 @@ void MainWindow::linePlotRequested(PlaneViewState& state, int imageX, int imageY
     updateDiagnostics();
 
     auto* watcher = new QFutureWatcher<LineQueryResult>(this);
+    auto* view = state.view;
     connect(watcher, &QFutureWatcher<LineQueryResult>::finished, this,
         [this, watcher, dataset, generation, cancellation, request, fieldName,
-            dimension, primaryFixedAxis, maximumLevel, composition] {
+            dimension, primaryFixedAxis, maximumLevel, composition, view] {
             --m_activeRequests;
             try {
                 auto result = watcher->result();
                 if (generation != m_generation || cancellation.stop_requested()) {
                     ++m_staleResults;
                 } else {
+                    view->clearLineGuide();
                     appendLinePlotCurve(result.line, fieldName, dimension,
                         primaryFixedAxis, request.fixedCoordinates,
                         maximumLevel, composition);
