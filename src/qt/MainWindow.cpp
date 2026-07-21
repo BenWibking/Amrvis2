@@ -53,6 +53,7 @@
 #include <QRect>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QStringList>
@@ -605,6 +606,34 @@ void populateLevelCombo(QComboBox* combo, int finestLevel)
     }
 }
 
+// How a slice-plane index maps to a physical coordinate. Indices use the
+// level's integer box space (domain.lower .. domain.upper), which can be
+// negative. Cell-centered data places the value at the center of each cell
+// (index i → prob_lo + (i - domain.lower + 0.5)*dx); nodal data places it
+// at the node (index i → prob_lo + (i - domain.lower)*dx).
+enum class IndexType : std::uint8_t { Cell, Node };
+
+int sliceIndexForPosition(const DatasetMetadata& md, int level, int axis,
+    double position, IndexType /*indexType*/)
+{
+    const auto i = static_cast<std::size_t>(axis);
+    const auto& levelMd = md.levels[static_cast<std::size_t>(level)];
+    const auto offset
+        = std::floor((position - md.physicalDomain.lower[i]) / levelMd.cellSize[i]);
+    return levelMd.domain.lower[i] + static_cast<int>(offset);
+}
+
+double positionForSliceIndex(const DatasetMetadata& md, int level, int axis,
+    int index, IndexType indexType)
+{
+    const auto i = static_cast<std::size_t>(axis);
+    const auto& levelMd = md.levels[static_cast<std::size_t>(level)];
+    const auto offset = index - levelMd.domain.lower[i];
+    const auto half = indexType == IndexType::Cell ? 0.5 : 0.0;
+    return md.physicalDomain.lower[i]
+        + (static_cast<double>(offset) + half) * levelMd.cellSize[i];
+}
+
 // Opens one plotfile on a worker thread and renders the slice(s) described
 // by spec — one per ortho view for 3-D, the single y-normal view for 2-D.
 // Shared by the initial open path (default spec) and the sequence path
@@ -707,6 +736,40 @@ InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
         }
         result.displays.push_back(std::move(display));
     }
+    // In 3-D, every views' "Visible" range must agree so the single color bar
+    // maps all three panels consistently. Compute the union of finite extrema
+    // across all three planes and re-render each display with the shared range.
+    if (result.displays.size() == 3 && spec.rangeMode == RangeMode::Visible) {
+        double globalMin = std::numeric_limits<double>::infinity();
+        double globalMax = -std::numeric_limits<double>::infinity();
+        for (const auto& d : result.displays) {
+            const auto [lo, hi] = finiteRange(d.slice.plane);
+            globalMin = std::min(globalMin, lo);
+            globalMax = std::max(globalMax, hi);
+        }
+        const auto logarithmic = spec.logarithmic;
+        if (globalMin == globalMax) {
+            if (logarithmic && globalMin > 0.0) {
+                globalMin /= 1.0 + 1.0e-6;
+                globalMax *= 1.0 + 1.0e-6;
+            } else {
+                const auto pad = std::max(std::abs(globalMin), 1.0) * 1.0e-6;
+                globalMin -= pad;
+                globalMax += pad;
+            }
+        }
+        for (auto& d : result.displays) {
+            d.minimum = globalMin;
+            d.maximum = globalMax;
+            d.image = renderScalarPlane(d.slice.plane,
+                ScalarRenderSettings{
+                    .minimum = globalMin,
+                    .maximum = globalMax,
+                    .logarithmic = d.logarithmic,
+                    .palette = &spec.palette
+                });
+        }
+    }
     return result;
 }
 
@@ -787,18 +850,24 @@ MainWindow::MainWindow(QWidget* parent)
         positionLayout->addWidget(new QLabel(
             QString::fromLatin1(axisLabels[static_cast<std::size_t>(axis)]),
             m_slicePositionControls));
-        auto* spin = new QDoubleSpinBox(m_slicePositionControls);
-        spin->setDecimals(8);
+        auto* spin = new QSpinBox(m_slicePositionControls);
         spin->setMinimumWidth(110);
         positionLayout->addWidget(spin);
         m_sliceSpinboxes[static_cast<std::size_t>(axis)] = spin;
-        connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged),
-            this, [this, axis](double value) {
+        connect(spin, qOverload<int>(&QSpinBox::valueChanged),
+            this, [this, axis](int index) {
                 if (!m_controlsReady || !m_dataset
                     || m_dataset->metadata().dimension != 3) {
                     return;
                 }
-                setSlicePosition(axis, value);
+                const auto level = sliceIndexLevel();
+                if (level < 0 || static_cast<std::size_t>(level)
+                    >= m_dataset->metadata().levels.size()) {
+                    return;
+                }
+                setSlicePosition(axis, positionForSliceIndex(
+                    m_dataset->metadata(), level, axis, index,
+                    IndexType::Cell));
             });
     }
     sliceToolbar->addWidget(m_slicePositionControls);
@@ -889,7 +958,10 @@ MainWindow::MainWindow(QWidget* parent)
             scheduleSliceRequest();
         });
     connect(m_levelSelector, qOverload<int>(&QComboBox::currentIndexChanged),
-        this, [this](int) { scheduleSliceRequest(); });
+        this, [this](int) {
+            configureSlicePositionControls();
+            scheduleSliceRequest();
+        });
     connect(m_rangeMode, qOverload<int>(&QComboBox::currentIndexChanged),
         this, [this](int) {
             const auto userRange = static_cast<RangeMode>(
@@ -3024,18 +3096,36 @@ void MainWindow::configureSlicePositionControls()
         m_slicePositionControls->setVisible(false);
         return;
     }
-    const auto& metadata = m_dataset->metadata();
-    const auto& domain = metadata.physicalDomain;
-    const auto& cellSize = metadata.levels.back().cellSize;
+    const auto& md = m_dataset->metadata();
+    const auto level = sliceIndexLevel();
+    if (level < 0 || static_cast<std::size_t>(level) >= md.levels.size()) {
+        m_slicePositionControls->setVisible(false);
+        return;
+    }
+    const auto& levelMd = md.levels[static_cast<std::size_t>(level)];
     for (std::size_t axis = 0; axis < 3; ++axis) {
         auto* spin = m_sliceSpinboxes[axis];
         const QSignalBlocker blocker(spin);
-        spin->setRange(domain.lower[axis],
-            std::nextafter(domain.upper[axis], domain.lower[axis]));
-        spin->setSingleStep(cellSize[axis]);
-        spin->setValue(m_slicePosition3d[axis]);
+        // Cell-centered: indices from domain.lower to domain.upper inclusive.
+        // Nodal data would have one extra node at the upper end: domain.upper+1.
+        const auto iMin = levelMd.domain.lower[axis];
+        const auto iMax = levelMd.domain.upper[axis];
+        spin->setRange(iMin, iMax);
+        spin->setSingleStep(1);
+        spin->setValue(sliceIndexForPosition(md, level,
+            static_cast<int>(axis), m_slicePosition3d[axis],
+            IndexType::Cell));
     }
     m_slicePositionControls->setVisible(true);
+}
+
+int MainWindow::sliceIndexLevel() const
+{
+    if (!m_dataset || m_dataset->metadata().dimension != 3) {
+        return -1;
+    }
+    const auto levelData = m_levelSelector->currentData().toInt();
+    return decodeLevelData(levelData, m_dataset->metadata().finestLevel).maximumLevel;
 }
 
 void MainWindow::setSlicePosition(int axis, double value)
@@ -3043,21 +3133,27 @@ void MainWindow::setSlicePosition(int axis, double value)
     if (!m_dataset || m_dataset->metadata().dimension != 3) {
         return;
     }
-    const auto index = static_cast<std::size_t>(axis);
+    const auto ax = static_cast<std::size_t>(axis);
     const auto& domain = m_dataset->metadata().physicalDomain;
-    const auto position = std::clamp(value, domain.lower[index],
-        std::nextafter(domain.upper[index], domain.lower[index]));
-    m_slicePosition3d[index] = position;
+    const auto position = std::clamp(value, domain.lower[ax],
+        std::nextafter(domain.upper[ax], domain.lower[ax]));
+    m_slicePosition3d[ax] = position;
     {
-        const QSignalBlocker blocker(m_sliceSpinboxes[index]);
-        m_sliceSpinboxes[index]->setValue(position);
+        const QSignalBlocker blocker(m_sliceSpinboxes[ax]);
+        const auto level = sliceIndexLevel();
+        if (level >= 0 && static_cast<std::size_t>(level)
+            < m_dataset->metadata().levels.size()) {
+            m_sliceSpinboxes[ax]->setValue(sliceIndexForPosition(
+                m_dataset->metadata(), level, axis, position,
+                IndexType::Cell));
+        }
     }
     m_isoWidget->setSlicePositions(m_slicePosition3d[0], m_slicePosition3d[1],
         m_slicePosition3d[2]);
     // The other two views only need their crosshair guides redrawn; the view
     // normal to the moved axis gets a fresh (debounced) slice.
     updateCrosshairs();
-    scheduleSliceRequest(m_planeViews[index]);
+    scheduleSliceRequest(m_planeViews[ax]);
 }
 
 void MainWindow::scheduleSliceRequest(bool rasterDirty)
@@ -3222,6 +3318,7 @@ void MainWindow::requestSlice(PlaneViewState& state, bool rasterDirty)
                 if (generation == m_generation
                     && sliceGeneration == state.sliceGeneration) {
                     showSlice(state, result);
+                    syncVisibleRanges();
                     const auto cache = dataset->cacheMetrics();
                     m_cacheBudgetBytes = cache.budgetBytes;
                     m_cacheResidentBytes = cache.residentBytes;
@@ -3483,6 +3580,85 @@ void MainWindow::showSlice(PlaneViewState& state, const SliceDisplayResult& disp
     m_lastCacheHits = display.slice.metrics.cacheHits;
     m_lastPayloadBytesRead = display.slice.metrics.payloadBytesRead;
     statusBar()->clearMessage();
+}
+
+void MainWindow::syncVisibleRanges()
+{
+    if (m_viewDimension != 3 || !m_dataset) {
+        return;
+    }
+    const auto rangeMode = static_cast<RangeMode>(
+        m_rangeMode->currentData().toInt());
+    if (rangeMode != RangeMode::Visible) {
+        return;
+    }
+    std::array<PlaneViewState*, 3> views{
+        &m_planeViews[0], &m_planeViews[1], &m_planeViews[2]};
+    const bool logarithmic = m_logarithmic->isChecked();
+
+    double globalMin = std::numeric_limits<double>::infinity();
+    double globalMax = -std::numeric_limits<double>::infinity();
+    for (const auto* state : views) {
+        if (state->plane.width <= 0 || state->plane.height <= 0) {
+            continue;
+        }
+        for (std::size_t i = 0; i < state->plane.values.size(); ++i) {
+            if (state->plane.valid[i] == 0
+                || !std::isfinite(state->plane.values[i])) {
+                continue;
+            }
+            const auto v = static_cast<double>(state->plane.values[i]);
+            globalMin = std::min(globalMin, v);
+            globalMax = std::max(globalMax, v);
+        }
+    }
+    if (!std::isfinite(globalMin) || !std::isfinite(globalMax)) {
+        return;
+    }
+    if (globalMin == globalMax) {
+        if (logarithmic && globalMin > 0.0) {
+            globalMin /= 1.0 + 1.0e-6;
+            globalMax *= 1.0 + 1.0e-6;
+        } else {
+            const auto pad = std::max(std::abs(globalMin), 1.0) * 1.0e-6;
+            globalMin -= pad;
+            globalMax += pad;
+        }
+    }
+    for (auto* state : views) {
+        if (state->plane.width <= 0 || state->plane.height <= 0) {
+            continue;
+        }
+        state->displayMinimum = globalMin;
+        state->displayMaximum = globalMax;
+        auto image = renderScalarPlane(state->plane, ScalarRenderSettings{
+            .minimum = globalMin,
+            .maximum = globalMax,
+            .logarithmic = state->displayLogarithmic,
+            .palette = &m_palette
+        });
+        if (!image.valid()) {
+            continue;
+        }
+        const QImage wrapped(
+            reinterpret_cast<const uchar*>(image.rgba.data()),
+            image.width, image.height, image.strideBytes,
+            QImage::Format_ARGB32);
+        state->view->setImage(wrapped.mirrored(false, true).copy());
+    }
+    if (m_activeView && m_activeView->plane.width > 0) {
+        const auto fieldName = m_fieldSelector->currentText();
+        const auto label = m_activeView->displayLogarithmic
+            ? fieldName + tr(" (log)") : fieldName;
+        m_colorBar->setLogarithmic(m_activeView->displayLogarithmic);
+        m_colorBar->setFieldRange(label, globalMin, globalMax);
+        if (rangeMode != RangeMode::User) {
+            const QSignalBlocker minBlocker(m_rangeMinimum);
+            const QSignalBlocker maxBlocker(m_rangeMaximum);
+            m_rangeMinimum->setValue(globalMin);
+            m_rangeMaximum->setValue(globalMax);
+        }
+    }
 }
 
 void MainWindow::choosePlotfileSequence()

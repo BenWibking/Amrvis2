@@ -37,6 +37,7 @@ class QComboBox;
 class QDockWidget;
 class QDoubleSpinBox;
 class QLabel;
+class QSpinBox;
 class QLineF;
 class QMenu;
 class QPlainTextEdit;
@@ -294,6 +295,10 @@ private:
     // Shared 3-D slice positions (physical coordinates per axis).
     void configureSlicePositionControls();
     void setSlicePosition(int axis, double value);
+    [[nodiscard]] int sliceIndexLevel() const;
+    // Visible-range mode in 3-D: recompute the min/max from all three panels'
+    // planes so the single color bar maps them consistently.
+    void syncVisibleRanges();
 
     // Slice requests: the debounce timer coalesces into per-view requests.
     // rasterDirty false means the trigger (contour mode/count) cannot change
@@ -370,7 +375,7 @@ private:
     std::unordered_map<std::uint32_t, FieldRange> m_fieldRanges;
     std::uint32_t m_trackedField = 0;
     QWidget* m_slicePositionControls = nullptr;
-    std::array<QDoubleSpinBox*, 3> m_sliceSpinboxes{nullptr, nullptr, nullptr};
+    std::array<QSpinBox*, 3> m_sliceSpinboxes{nullptr, nullptr, nullptr};
     QTimer* m_sliceDebounce = nullptr;
     QTreeWidget* m_metadataTree = nullptr;
     QPlainTextEdit* m_diagnostics = nullptr;
