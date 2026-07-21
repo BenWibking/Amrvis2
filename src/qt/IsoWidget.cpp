@@ -4,10 +4,14 @@
 
 #include <amrvis/render2d/Palette.hpp>
 
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QPen>
 #include <QPolygonF>
+#include <QPushButton>
+#include <QResizeEvent>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
@@ -16,10 +20,7 @@
 namespace amrvis::qt {
 namespace {
 
-// Fixed view direction: rotate about z, then about x, orthographic.
 constexpr double pi = 3.14159265358979323846;
-constexpr double azimuth = 30.0 * pi / 180.0;
-constexpr double elevation = 30.0 * pi / 180.0;
 
 // Cube corner indexing: bit 0 = x side, bit 1 = y side, bit 2 = z side.
 constexpr std::array<std::array<int, 2>, 12> boxEdges{{
@@ -32,8 +33,39 @@ constexpr std::array<std::array<int, 2>, 12> boxEdges{{
 
 IsoWidget::IsoWidget(QWidget* parent)
     : QWidget(parent)
+    , m_azimuth(30.0 * pi / 180.0)
+    , m_elevation(30.0 * pi / 180.0)
 {
     setMinimumSize(200, 150);
+    setMouseTracking(true);
+
+    const auto makeBtn = [this](const QString& label) {
+        auto* btn = new QPushButton(label, this);
+        btn->setFixedSize(32, 26);
+        btn->setFocusPolicy(Qt::NoFocus);
+        QFont f = btn->font();
+        f.setPointSize(9);
+        btn->setFont(f);
+        btn->setStyleSheet(
+            QStringLiteral("QPushButton { color: rgba(255,255,255,230);"
+            " background: rgba(255,255,255,30); border: 1px solid"
+            " rgba(255,255,255,80); border-radius: 2px; }"
+            "QPushButton:hover { background: rgba(255,255,255,60); }"));
+        return btn;
+    };
+    m_btnXY = makeBtn(QStringLiteral("XY"));
+    m_btnXZ = makeBtn(QStringLiteral("XZ"));
+    m_btnYZ = makeBtn(QStringLiteral("YZ"));
+
+    connect(m_btnXY, &QPushButton::clicked, this, [this] {
+        setViewAngles(0.0, 0.0);
+    });
+    connect(m_btnXZ, &QPushButton::clicked, this, [this] {
+        setViewAngles(0.0, -pi / 2.0);
+    });
+    connect(m_btnYZ, &QPushButton::clicked, this, [this] {
+        setViewAngles(-pi / 2.0, -pi / 2.0);
+    });
 }
 
 void IsoWidget::setGeometry(const DatasetMetadata& metadata)
@@ -82,10 +114,6 @@ void IsoWidget::paintEvent(QPaintEvent* event)
     projection.scale = std::max(
         std::min(projection.centerX, projection.centerY) - margin, 1.0);
 
-    // Translucent slice planes first so the wireframes stay readable.
-    for (int axis = 0; axis < 3; ++axis) {
-        drawSlicePlane(painter, projection, axis);
-    }
     for (const auto& level : m_levels) {
         const QPen pen(levelOutlineColor(level.level), 1);
         for (const auto& box : level.boxes) {
@@ -93,6 +121,7 @@ void IsoWidget::paintEvent(QPaintEvent* event)
         }
     }
     drawBox(painter, projection, m_domain, QPen(Qt::white, 1));
+    drawAxisIndicator(painter);
 }
 
 QPointF IsoWidget::project(const Projection& projection,
@@ -108,13 +137,13 @@ QPointF IsoWidget::project(const Projection& projection,
         / safeExtent;
     const auto nz = (z - 0.5 * (m_domain.lower[2] + m_domain.upper[2]))
         / safeExtent;
-    const auto cosAz = std::cos(azimuth);
-    const auto sinAz = std::sin(azimuth);
+    const auto cosAz = std::cos(m_azimuth);
+    const auto sinAz = std::sin(m_azimuth);
     const auto x1 = nx * cosAz - ny * sinAz;
     const auto y1 = nx * sinAz + ny * cosAz;
-    const auto y2 = y1 * std::cos(elevation) - nz * std::sin(elevation);
-    return QPointF(projection.centerX + projection.scale * x1,
-        projection.centerY - projection.scale * y2);
+    const auto y2 = y1 * std::cos(m_elevation) - nz * std::sin(m_elevation);
+    return QPointF(projection.centerX + projection.scale * m_zoom * x1,
+        projection.centerY - projection.scale * m_zoom * y2);
 }
 
 void IsoWidget::drawBox(QPainter& painter, const Projection& projection,
@@ -195,6 +224,149 @@ QColor IsoWidget::slicePlaneColor(int axis) const
     }
     return QColor::fromRgba(static_cast<QRgb>(
         m_palette->slotArgb(paletteSlots[static_cast<std::size_t>(axis)])));
+}
+
+void IsoWidget::mousePressEvent(QMouseEvent* event)
+{
+    if (event->button() == Qt::LeftButton && m_hasGeometry) {
+        m_lastMousePos = event->pos();
+        m_dragging = true;
+        setCursor(Qt::ClosedHandCursor);
+        event->accept();
+        return;
+    }
+    QWidget::mousePressEvent(event);
+}
+
+void IsoWidget::mouseMoveEvent(QMouseEvent* event)
+{
+    if (m_dragging) {
+        const auto delta = event->pos() - m_lastMousePos;
+        m_lastMousePos = event->pos();
+        constexpr double sensitivity = 0.008;
+        m_azimuth -= static_cast<double>(delta.x()) * sensitivity;
+        m_elevation += static_cast<double>(delta.y()) * sensitivity;
+        m_elevation = std::clamp(m_elevation, -pi / 2.0 + 0.01, pi / 2.0 - 0.01);
+        update();
+        event->accept();
+        return;
+    }
+    QWidget::mouseMoveEvent(event);
+}
+
+void IsoWidget::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (event->button() == Qt::LeftButton && m_dragging) {
+        m_dragging = false;
+        setCursor(Qt::ArrowCursor);
+        event->accept();
+        return;
+    }
+    QWidget::mouseReleaseEvent(event);
+}
+
+void IsoWidget::wheelEvent(QWheelEvent* event)
+{
+    if (!m_hasGeometry) {
+        QWidget::wheelEvent(event);
+        return;
+    }
+    constexpr double zoomStep = 1.15;
+    const auto factor = event->angleDelta().y() >= 0
+        ? zoomStep : 1.0 / zoomStep;
+    m_zoom = std::clamp(m_zoom * factor, 0.1, 10.0);
+    update();
+    event->accept();
+}
+
+void IsoWidget::drawAxisIndicator(QPainter& painter) const
+{
+    constexpr int originX = 38;
+    constexpr int originY = 28;
+    constexpr int armLen = 24;
+
+    const int h = height();
+    const QPointF origin(static_cast<qreal>(originX),
+        static_cast<qreal>(h - originY));
+
+    const auto cosAz = std::cos(m_azimuth);
+    const auto sinAz = std::sin(m_azimuth);
+    const auto cosEl = std::cos(m_elevation);
+    const auto sinEl = std::sin(m_elevation);
+
+    auto projectDir = [&](double dx, double dy, double dz) -> QPointF {
+        const auto x1 = dx * cosAz - dy * sinAz;
+        const auto y1 = dx * sinAz + dy * cosAz;
+        const auto y2 = y1 * cosEl - dz * sinEl;
+        return QPointF(static_cast<double>(armLen) * x1,
+            -static_cast<double>(armLen) * y2);
+    };
+
+    const auto xTip = origin + projectDir(1.0, 0.0, 0.0);
+    const auto yTip = origin + projectDir(0.0, 1.0, 0.0);
+    const auto zTip = origin + projectDir(0.0, 0.0, 1.0);
+
+    const QColor xColor = slicePlaneColor(0);
+    const QColor yColor = slicePlaneColor(1);
+    const QColor zColor = slicePlaneColor(2);
+
+    QFont font;
+    font.setPointSize(11);
+    font.setBold(true);
+
+    const auto drawArm = [&](const QPointF& tip, const QColor& color,
+            const QString& label) {
+        QPen pen(color, 2);
+        pen.setCapStyle(Qt::RoundCap);
+        painter.setPen(pen);
+        painter.drawLine(origin.toPoint(), tip.toPoint());
+
+        const auto dir = tip - origin;
+        const auto len = std::hypot(dir.x(), dir.y());
+        if (len < 1.0) return;
+        const auto ux = dir.x() / len;
+        const auto uy = dir.y() / len;
+
+        painter.setFont(font);
+        const auto fm = painter.fontMetrics();
+        const QRectF labelRect(tip.x() + ux * 6.0 - 16.0,
+            tip.y() + uy * 6.0 - fm.height() / 2.0, 32.0, fm.height());
+        painter.drawText(labelRect, Qt::AlignCenter, label);
+    };
+
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing);
+    drawArm(xTip, xColor, QStringLiteral("X"));
+    drawArm(yTip, yColor, QStringLiteral("Y"));
+    drawArm(zTip, zColor, QStringLiteral("Z"));
+    painter.restore();
+}
+
+void IsoWidget::setViewAngles(double azimuth, double elevation)
+{
+    m_azimuth = azimuth;
+    m_elevation = elevation;
+    update();
+}
+
+void IsoWidget::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    layoutButtons();
+}
+
+void IsoWidget::layoutButtons()
+{
+    if (!m_btnXY) return;
+    constexpr int btnW = 32;
+    constexpr int btnH = 26;
+    constexpr int gap = 4;
+    const int y = height() - btnH - 6;
+    const int totalW = btnW * 3 + gap * 2;
+    int x = (width() - totalW) / 2;
+    m_btnXY->move(x, y);        x += btnW + gap;
+    m_btnXZ->move(x, y);        x += btnW + gap;
+    m_btnYZ->move(x, y);
 }
 
 } // namespace amrvis::qt
