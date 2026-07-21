@@ -3092,16 +3092,27 @@ void MainWindow::configureSliceControls()
 
 void MainWindow::configureSlicePositionControls()
 {
-    if (!m_dataset || m_dataset->metadata().dimension != 3) {
+    if (!m_dataset) {
         m_slicePositionControls->setVisible(false);
         return;
     }
+    m_slicePositionControls->setVisible(true);
     const auto& md = m_dataset->metadata();
+
+    if (md.dimension != 3) {
+        // 2-D: dim rather than hide — there is no slice depth to control,
+        // but the user can see Position is a 3-D-only concept.
+        m_slicePositionControls->setEnabled(false);
+        return;
+    }
+
     const auto level = sliceIndexLevel();
     if (level < 0 || static_cast<std::size_t>(level) >= md.levels.size()) {
-        m_slicePositionControls->setVisible(false);
+        m_slicePositionControls->setEnabled(false);
         return;
     }
+
+    m_slicePositionControls->setEnabled(true);
     const auto& levelMd = md.levels[static_cast<std::size_t>(level)];
     for (std::size_t axis = 0; axis < 3; ++axis) {
         auto* spin = m_sliceSpinboxes[axis];
@@ -3116,7 +3127,6 @@ void MainWindow::configureSlicePositionControls()
             static_cast<int>(axis), m_slicePosition3d[axis],
             IndexType::Cell));
     }
-    m_slicePositionControls->setVisible(true);
 }
 
 int MainWindow::sliceIndexLevel() const
