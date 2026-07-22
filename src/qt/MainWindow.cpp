@@ -2359,7 +2359,8 @@ void MainWindow::linePlotRequested(PlaneViewState& state, int imageX, int imageY
                 } else {
                     view->clearLineGuide();
                     appendLinePlotCurve(result.line, fieldName, dimension,
-                        primaryFixedAxis, request.fixedCoordinates,
+                        primaryFixedAxis, request.axis,
+                        request.fixedCoordinates,
                         maximumLevel, composition);
                     const auto cache = dataset->cacheMetrics();
                     m_cacheBudgetBytes = cache.budgetBytes;
@@ -2418,8 +2419,8 @@ void MainWindow::sliceMoveRequested(PlaneViewState& state, int imageX, int image
 
 void MainWindow::appendLinePlotCurve(const LineResult& line,
     const std::string& fieldName, int dimension, int primaryFixedAxis,
-    const std::array<double, 3>& fixedCoordinates, int maximumLevel,
-    CompositionPolicy composition)
+    int lineAxis, const std::array<double, 3>& fixedCoordinates,
+    int maximumLevel, CompositionPolicy composition)
 {
     if (m_linePlotWindow == nullptr) {
         auto name = QString::fromStdString(m_datasetPath.filename().string());
@@ -2443,6 +2444,7 @@ void MainWindow::appendLinePlotCurve(const LineResult& line,
     curve.line = line;
     curve.fieldName = fieldName;
     curve.primaryFixedAxis = primaryFixedAxis;
+    curve.lineAxis = lineAxis;
     curve.fixedCoordinates = fixedCoordinates;
     curve.dimension = dimension;
     curve.maximumLevel = maximumLevel;

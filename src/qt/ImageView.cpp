@@ -446,7 +446,12 @@ void ImageView::mousePressEvent(QMouseEvent* event)
             m_lineDragButton = event->button();
             m_linePressPosition = event->position().toPoint();
             m_lineDragShiftHeld = event->modifiers() & Qt::ShiftModifier;
-            showLineGuide(event->position().toPoint());
+            // Show the guide immediately for Shift+clicks (explicit line-plot
+            // request); for plain right-clicks in 3-D, defer until the drag
+            // exceeds the threshold so the guide doesn't flash on a slice move.
+            if (m_lineDragShiftHeld) {
+                showLineGuide(event->position().toPoint());
+            }
             handled = true;
         }
     }
@@ -544,7 +549,13 @@ void ImageView::mouseMoveEvent(QMouseEvent* event)
         return;
     }
     if (m_lineDragButton != Qt::NoButton) {
-        updateLineGuide(event->position().toPoint());
+        const auto drag = event->position().toPoint() - m_linePressPosition;
+        constexpr int guideThreshold = 6;
+        if (m_lineDragShiftHeld
+            || std::abs(drag.x()) > guideThreshold
+            || std::abs(drag.y()) > guideThreshold) {
+            updateLineGuide(event->position().toPoint());
+        }
     }
     const auto scenePosition = mapToScene(event->position().toPoint());
     const auto imagePosition = m_item->mapFromScene(scenePosition);

@@ -3,6 +3,7 @@
 #include "Theme.hpp"
 
 #include <QCheckBox>
+#include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QListWidget>
@@ -156,8 +157,8 @@ void LinePlotWidget::paintEvent(QPaintEvent* /*event*/)
     if (!range.has_value()) {
         painter.setPen(Qt::white);
         painter.drawText(rect(), Qt::AlignCenter,
-            tr("Shift+middle click or horizontal drag for X, "
-               "Shift+right click or vertical drag for Y"));
+            tr("Shift+middle click or horizontal right drag for X, "
+               "Shift+right click or vertical right drag for Y"));
         return;
     }
     const auto plot = plotRect();
@@ -326,6 +327,7 @@ LinePlotWindow::LinePlotWindow(const QString& datasetName, QWidget* parent)
 
     m_legend = new QListWidget(this);
     m_legend->setMaximumWidth(260);
+    m_legend->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
 
     auto* clearButton = new QPushButton(tr("Clear"), this);
     auto* zoomButton = new QPushButton(tr("Reset Zoom"), this);
@@ -377,16 +379,37 @@ void LinePlotWindow::addCurve(LinePlotCurve curve)
     auto* item = new QListWidgetItem(QIcon(swatch), curveDescription(added), m_legend);
     item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
     item->setCheckState(Qt::Checked);
+    if (added.dimension == 3) {
+        item->setSizeHint(QSize(0, m_legend->fontMetrics().height() * 2 + 6));
+    }
     m_plot->update();
 }
 
 QString LinePlotWindow::curveDescription(const LinePlotCurve& curve) const
 {
-    const auto fixed = static_cast<std::size_t>(curve.primaryFixedAxis);
-    return tr("%1 %2=%3")
-        .arg(QString::fromStdString(curve.fieldName))
-        .arg(QLatin1String(axisLetters[fixed]))
-        .arg(curve.fixedCoordinates[fixed], 0, 'g', 6);
+    auto result = QString::fromStdString(curve.fieldName);
+    if (curve.dimension == 3) {
+        const auto indent = QString(result.size() + 1, QLatin1Char(' '));
+        bool first = true;
+        for (int axis = 0; axis < 3; ++axis) {
+            if (axis == curve.lineAxis) {
+                continue;
+            }
+            result += (first ? QStringLiteral(" ") : QChar('\n') + indent)
+                + tr("%1=%2")
+                    .arg(QLatin1String(
+                        axisLetters[static_cast<std::size_t>(axis)]))
+                    .arg(curve.fixedCoordinates[static_cast<std::size_t>(axis)],
+                        0, 'g', 6);
+            first = false;
+        }
+    } else {
+        const auto fixed = static_cast<std::size_t>(curve.primaryFixedAxis);
+        result += tr(" %1=%2")
+            .arg(QLatin1String(axisLetters[fixed]))
+            .arg(curve.fixedCoordinates[fixed], 0, 'g', 6);
+    }
+    return result;
 }
 
 void LinePlotWindow::clearCurves()

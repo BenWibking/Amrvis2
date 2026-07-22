@@ -28,6 +28,7 @@ struct LinePlotCurve {
     LineResult line;
     std::string fieldName;
     int primaryFixedAxis = 1;  // in-plane fixed axis (from the cursor)
+    int lineAxis = 0;          // axis the line varies along
     std::array<double, 3> fixedCoordinates{};
     int dimension = 2;
     int maximumLevel = 0;

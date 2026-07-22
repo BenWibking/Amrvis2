@@ -325,7 +325,7 @@ private:
     void requestInitialSlice(const std::filesystem::path& path, std::uint64_t generation);
     void configureSliceControls();
     void appendLinePlotCurve(const LineResult& line, const std::string& fieldName,
-        int dimension, int primaryFixedAxis,
+        int dimension, int primaryFixedAxis, int lineAxis,
         const std::array<double, 3>& fixedCoordinates, int maximumLevel,
         CompositionPolicy composition);
 
