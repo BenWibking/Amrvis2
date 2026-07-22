@@ -3779,16 +3779,21 @@ void MainWindow::updateGridBoxes(PlaneViewState& state)
             const auto yUpper = metadata.physicalDomain.lower[yAxis]
                 + static_cast<double>(static_cast<std::int64_t>(box.upper[yAxis])
                     - level.domain.lower[yAxis] + 1) * level.cellSize[yAxis];
-            const auto pixelX0 = (xLower - plane.physicalRegion.lower[xAxis])
-                / xExtent * plane.width;
-            const auto pixelX1 = (xUpper - plane.physicalRegion.lower[xAxis])
-                / xExtent * plane.width;
-            const auto pixelY0 = plane.height
+            const auto pixelX0 = std::round(
+                (xLower - plane.physicalRegion.lower[xAxis])
+                    / xExtent * plane.width);
+            const auto pixelX1 = std::round(
+                (xUpper - plane.physicalRegion.lower[xAxis])
+                    / xExtent * plane.width);
+            const auto pixelY0 = std::round(plane.height
                 - (yUpper - plane.physicalRegion.lower[yAxis])
-                    / yExtent * plane.height;
-            const auto pixelY1 = plane.height
+                    / yExtent * plane.height);
+            const auto pixelY1 = std::round(plane.height
                 - (yLower - plane.physicalRegion.lower[yAxis])
-                    / yExtent * plane.height;
+                    / yExtent * plane.height);
+            if (pixelX0 == pixelX1 || pixelY0 == pixelY1) {
+                continue;
+            }
             QRectF rectangle(QPointF(pixelX0, pixelY0), QPointF(pixelX1, pixelY1));
             rectangle = rectangle.normalized().intersected(
                 QRectF(0.0, 0.0, plane.width, plane.height));
