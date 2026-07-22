@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QLoggingCategory>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTextStream>
@@ -113,6 +114,9 @@ void ensureDesktopEntry()
 
 int main(int argc, char* argv[])
 {
+    // Disable Wayland warnings
+    QLoggingCategory::setFilterRules(QStringLiteral("qt.qpa.wayland.textinput=false"));
+
     QApplication application(argc, argv);
     // Advertise the desktop entry name and WM class as "amrvis2" so Linux
     // docks/taskbars can match the running window to amrvis2.desktop and
@@ -120,7 +124,7 @@ int main(int argc, char* argv[])
     // title-bar icon). QSettings keeps its own hardcoded "Amrvis2" names, so
     // saved preferences are unaffected.
     application.setApplicationName(QStringLiteral("amrvis2"));
-    QGuiApplication::setDesktopFileName(QStringLiteral("amrvis2"));
+    // QGuiApplication::setDesktopFileName(QStringLiteral("amrvis2"));
     // Bundle the logo (rounded-square heatmap) at several sizes so it stays
     // crisp from the 16 px title bar up to the 256 px taskbar/dock.
     QIcon icon;
