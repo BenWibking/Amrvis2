@@ -40,7 +40,7 @@ int main()
 
     writeText(root / "Header",
         "HyperCLaw-V1.1\n"
-        "2\nfirst\nsecond\n"
+        "2\nfirst\nsecond-field\n"
         "2\n0.0\n0\n"
         "0.0 0.0\n1.0 1.0\n\n"
         "((0,0) (1,1) (0,0))\n"
@@ -122,7 +122,7 @@ int main()
 #if AMRVIS_ENABLE_DERIVED_FIELDS
     const auto derived = dataset.addDerivedField({
         .name = "magnitude",
-        .expression = "sqrt(first**2 + second**2)"
+        .expression = "sqrt(first**2 + second-field**2)"
     });
     require(derived.value == 2, "derived field id does not follow stored fields");
     require(dataset.metadata().fields.size() == 3,
@@ -137,6 +137,16 @@ int main()
         "derived field expression produced incorrect values");
     require(derivedAccess.io.filesRead == 1,
         "derived field did not reuse the already cached second input");
+
+    const auto difference = dataset.addDerivedField({
+        .name = "difference",
+        .expression = "second-field - first"
+    });
+    request.field = difference;
+    const auto differenceAccess = dataset.requestBlock(request);
+    require(differenceAccess.handle->values[0] == 9.0
+            && differenceAccess.handle->values[3] == 36.0,
+        "dashed field name was confused with subtraction");
 
     const auto chained = dataset.addDerivedField({
         .name = "scaled",
