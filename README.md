@@ -85,6 +85,8 @@ VTK configuration and the bounded volume-query contract are implemented.
   shared by ParaView/VisIt), and blackbody (a black-body radiation thermal
   ramp); custom palette files (`.pal`) can also be loaded
 - Color bar, AMR grid box overlays, and a cursor probe readout
+- Particle point overlays with per-species selection and deterministic,
+  particle-ID-based sampling that stays stable across plotfile sequences
 - Rubber-band zoom into a subregion
 - Contour lines and vector glyph overlays
 - XY line plots through the data
@@ -127,7 +129,9 @@ exact level. Ctrl+D opens a Dataset window listing the visible region's raw
 cell values per AMR level.
 
 View → Number Format... sets the printf-style readout format (default
-`%7.5f`).
+`%7.5f`). View → Particles... selects particle species, the visible sample
+percentage, and point size. In 3-D, particles are projected onto each
+orthogonal slice view.
 
 Variable → Add Derived Field... creates a scalar field from an AMReX parser
 expression. Existing scalar field names are the expression variables; for

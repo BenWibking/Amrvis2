@@ -115,6 +115,9 @@ PlotfileDataset::PlotfileDataset(
     , m_id(id)
     , m_metadataResult(readDatasetMetadata(plotfile))
     , m_metadata(std::make_shared<DatasetMetadata>(*m_metadataResult.metadata))
+    , m_particleSpecies(std::filesystem::is_directory(plotfile)
+            ? discoverParticleSpecies(m_plotfile)
+            : std::vector<ParticleSpeciesMetadata>{})
     , m_blockReader(m_plotfile, m_metadata)
     , m_cache(cacheBudgetBytes)
     , m_storedFieldCount(m_metadata->fields.size())
@@ -224,6 +227,20 @@ bool PlotfileDataset::isDerivedField(FieldId field) const noexcept
     static_cast<void>(field);
     return false;
 #endif
+}
+
+const std::vector<ParticleSpeciesMetadata>& PlotfileDataset::particleSpecies()
+    const noexcept
+{
+    return m_particleSpecies;
+}
+
+ParticleSample PlotfileDataset::requestParticleSample(
+    const std::string& species, double fraction, std::uint64_t seed,
+    std::stop_token cancellation) const
+{
+    return readParticleSample(
+        m_plotfile, species, fraction, seed, cancellation);
 }
 
 PlotfileDataset::BlockAccess PlotfileDataset::requestBlock(

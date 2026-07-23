@@ -4,6 +4,7 @@
 #include <amrvis/cache/ByteLruCache.hpp>
 #include <amrvis/io/PlotfileBlockReader.hpp>
 #include <amrvis/io/PlotfileMetadataReader.hpp>
+#include <amrvis/io/ParticleReader.hpp>
 
 #include <cstdint>
 #include <filesystem>
@@ -35,6 +36,11 @@ public:
     [[nodiscard]] const DatasetMetadata& metadata() const noexcept;
     [[nodiscard]] const MetadataReadMetrics& metadataReadMetrics() const noexcept;
     [[nodiscard]] DatasetId id() const noexcept;
+    [[nodiscard]] const std::vector<ParticleSpeciesMetadata>& particleSpecies()
+        const noexcept;
+    [[nodiscard]] ParticleSample requestParticleSample(
+        const std::string& species, double fraction, std::uint64_t seed = 0,
+        std::stop_token cancellation = {}) const;
 
     // Adds a scalar, cell-centered field whose AMReX parser expression may
     // reference existing scalar fields by name. The returned id is immediately
@@ -60,6 +66,7 @@ private:
     DatasetId m_id;
     PlotfileMetadataResult m_metadataResult;
     std::shared_ptr<DatasetMetadata> m_metadata;
+    std::vector<ParticleSpeciesMetadata> m_particleSpecies;
     PlotfileBlockReader m_blockReader;
     BlockCache m_cache;
     std::size_t m_storedFieldCount = 0;
