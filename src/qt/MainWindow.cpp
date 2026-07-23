@@ -6,6 +6,7 @@
 #include "IsoWidget.hpp"
 #include "LinePlotRequest.hpp"
 #include "LinePlotWindow.hpp"
+#include "ScientificDoubleSpinBox.hpp"
 #include "SetContoursDialog.hpp"
 #include "Theme.hpp"
 
@@ -81,7 +82,6 @@
 #include <map>
 #include <memory>
 #include <optional>
-#include <stop_token>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -109,6 +109,15 @@ constexpr std::array<BuiltinPalette, 7> builtinPalettes{
 // Menu labels and QSettings keys; kept in sync with builtinPaletteName().
 constexpr std::array<const char*, 7> builtinPaletteNames{
     "rainbow", "turbo", "viridis", "plasma", "parula", "coolwarm", "blackbody"};
+
+QImage verticallyFlippedCopy(const QImage& image)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
+    return image.flipped(Qt::Vertical).copy();
+#else
+    return image.mirrored(false, true).copy();
+#endif
+}
 
 // Marks the active row in the palette dropdown with a bullet. The bullet lives
 // in a reserved left column that every row's sizeHint accounts for, so names
@@ -376,7 +385,7 @@ SliceDisplayResult executeSlice(const std::shared_ptr<PlotfileDataset>& dataset,
     const SliceRequest& request,
     RangeMode rangeMode,
     const std::optional<std::pair<double, double>>& userRange,
-    bool logarithmic, const Palette& palette, std::stop_token cancellation)
+    bool logarithmic, const Palette& palette, StopToken cancellation)
 {
     SliceDisplayResult result;
     result.request = request;
@@ -403,7 +412,7 @@ SliceDisplayResult executeSlice(const std::shared_ptr<PlotfileDataset>& dataset,
 // region, level, and output size so the planes line up sample for sample.
 void appendVectorGlyphs(const std::shared_ptr<PlotfileDataset>& dataset,
     SliceRequest request, FieldId uField, FieldId vField, int count,
-    std::stop_token cancellation, SliceDisplayResult& result)
+    StopToken cancellation, SliceDisplayResult& result)
 {
     request.field = uField;
     auto uSlice = SliceQuery(*dataset).execute(request, cancellation);
@@ -502,7 +511,7 @@ void appendVectorGlyphs(const std::shared_ptr<PlotfileDataset>& dataset,
 // refreshCachedSlice).
 void appendContours(const std::shared_ptr<PlotfileDataset>& dataset,
     const SliceRequest& request, int contourCount, double minimum, double maximum,
-    bool logarithmic, std::stop_token cancellation, SliceDisplayResult& result)
+    bool logarithmic, StopToken cancellation, SliceDisplayResult& result)
 {
     const auto& metadata = dataset->metadata();
     const auto level = std::min(request.maximumLevel, metadata.finestLevel);
@@ -676,7 +685,7 @@ double positionForSliceIndex(const DatasetMetadata& md, int level, int axis,
 // Shared by the initial open path (default spec) and the sequence path
 // (spec preserving the user's UI state across frames).
 InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
-    DatasetId datasetId, const FrameSliceSpec& spec, std::stop_token cancellation)
+    DatasetId datasetId, const FrameSliceSpec& spec, StopToken cancellation)
 {
     InitialSliceResult result;
     result.dataset = std::make_shared<PlotfileDataset>(
@@ -975,10 +984,9 @@ MainWindow::MainWindow(QWidget* parent)
     m_rangeMode->addItem(tr("Visible"), static_cast<int>(RangeMode::Visible));
     m_rangeMode->addItem(tr("User"), static_cast<int>(RangeMode::User));
     rangeToolbar->addWidget(m_rangeMode);
-    m_rangeMinimum = new QDoubleSpinBox(rangeToolbar);
-    m_rangeMaximum = new QDoubleSpinBox(rangeToolbar);
+    m_rangeMinimum = new ScientificDoubleSpinBox(rangeToolbar);
+    m_rangeMaximum = new ScientificDoubleSpinBox(rangeToolbar);
     for (auto* range : {m_rangeMinimum, m_rangeMaximum}) {
-        range->setDecimals(8);
         range->setRange(-std::numeric_limits<double>::max(),
             std::numeric_limits<double>::max());
         range->setMinimumWidth(110);
@@ -1857,6 +1865,8 @@ void MainWindow::applyNumberFormat(const QString& format)
         return;
     }
     m_numberFormat = format;
+    m_rangeMinimum->setNumberFormat(format);
+    m_rangeMaximum->setNumberFormat(format);
     m_colorBar->setNumberFormat(format);
     // Open child windows repaint against the stored format; a null pointer
     // means the window picks the format up when it is next created.
@@ -2705,7 +2715,7 @@ void MainWindow::linePlotRequested(PlaneViewState& state, int imageX, int imageY
     // stopped it, so concurrent line requests can still complete and stack
     // their curves in the shared window.
     if (m_linePlotStopSource.stop_requested()) {
-        m_linePlotStopSource = std::stop_source{};
+        m_linePlotStopSource = StopSource{};
     }
     const auto cancellation = m_linePlotStopSource.get_token();
     ++m_activeRequests;
@@ -2851,8 +2861,8 @@ void MainWindow::cancelInFlight()
     // run on QThreadPool::globalInstance() via QtConcurrent::run, and that
     // pool's destructor calls waitForDone() with no timeout. A task caught
     // mid-read holds the global AMReX I/O mutex and only re-checks its
-    // stop_token at the next chunk boundary (PlotfileBlockReader checks every
-    // 1 MiB / 4096 values), so unless it is told to stop the process lingers
+    // cancellation token at the next chunk boundary (PlotfileBlockReader
+    // checks every 1 MiB / 4096 values), so unless it is told to stop the process lingers
     // "not responding" at quit -- which is what made closing the window look
     // like a hang. request_stop is the cooperative signal those tasks poll, so
     // once set a running task bails promptly and teardown unblocks.
@@ -2923,6 +2933,8 @@ void MainWindow::restoreSettings()
             defaultNumberFormat()).toString();
         m_numberFormat = isValidNumberFormat(format) ? format
             : defaultNumberFormat();
+        m_rangeMinimum->setNumberFormat(m_numberFormat);
+        m_rangeMaximum->setNumberFormat(m_numberFormat);
         m_colorBar->setNumberFormat(m_numberFormat);
     }
     m_animationPanel->setSpeedValue(
@@ -3677,7 +3689,7 @@ void MainWindow::requestInitialSlice(
     m_initialStopSource.request_stop();
     m_linePlotStopSource.request_stop();
     m_particleStopSource.request_stop();
-    m_initialStopSource = std::stop_source{};
+    m_initialStopSource = StopSource{};
     const auto cancellation = m_initialStopSource.get_token();
     // The initial open uses default slice state: field 0, finest available,
     // visible range, linear scale, whole domain, midpoint positions.
@@ -3982,7 +3994,7 @@ void MainWindow::requestSlice(PlaneViewState& state, bool rasterDirty)
                 && contourCount == state.cachedContourCount));
 
     state.stopSource.request_stop();
-    state.stopSource = std::stop_source{};
+    state.stopSource = StopSource{};
     const auto cancellation = state.stopSource.get_token();
     const auto generation = m_generation;
     const auto sliceGeneration = ++state.sliceGeneration;
@@ -4293,7 +4305,7 @@ void MainWindow::showSlice(PlaneViewState& state, const SliceDisplayResult& disp
             reinterpret_cast<const uchar*>(display.image.rgba.data()),
             display.image.width, display.image.height, display.image.strideBytes,
             QImage::Format_ARGB32);
-        const auto displayImage = wrapped.mirrored(false, true).copy();
+        const auto displayImage = verticallyFlippedCopy(wrapped);
         state.view->setImage(displayImage);
     }
     state.plane = display.slice.plane;
@@ -4423,7 +4435,7 @@ void MainWindow::syncVisibleRanges()
             reinterpret_cast<const uchar*>(image.rgba.data()),
             image.width, image.height, image.strideBytes,
             QImage::Format_ARGB32);
-        state->view->setImage(wrapped.mirrored(false, true).copy());
+        state->view->setImage(verticallyFlippedCopy(wrapped));
     }
     // setImage clears grid boxes and vector/contour overlays; restore them.
     for (auto* state : views) {
@@ -4616,7 +4628,7 @@ void MainWindow::startFrameLoad(int index, std::uint64_t generation)
     const auto path = m_sequenceFrames[static_cast<std::size_t>(index)];
     const auto datasetId = DatasetId{
         sequenceDatasetIdBase + ++m_sequenceDatasetCounter};
-    m_initialStopSource = std::stop_source{};
+    m_initialStopSource = StopSource{};
     const auto cancellation = m_initialStopSource.get_token();
     ++m_activeRequests;
     statusBar()->showMessage(tr("Loading frame %1...").arg(
@@ -4893,7 +4905,7 @@ void MainWindow::startPrefetch(int frameIndex)
     const auto path = m_sequenceFrames[static_cast<std::size_t>(frameIndex)];
     const auto datasetId = DatasetId{
         sequenceDatasetIdBase + ++m_sequenceDatasetCounter};
-    m_prefetchStopSource = std::stop_source{};
+    m_prefetchStopSource = StopSource{};
     const auto cancellation = m_prefetchStopSource.get_token();
     ++m_activeRequests;
     updateDiagnostics();
