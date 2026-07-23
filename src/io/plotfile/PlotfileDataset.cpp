@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstddef>
 #include <functional>
 #include <limits>
@@ -46,6 +47,72 @@ std::filesystem::path dataRoot(const std::filesystem::path& path)
 
 constexpr std::size_t maximumDerivedInputs = 16;
 using DerivedEvaluator = std::function<double(std::span<const double>)>;
+
+struct ParserFieldAlias {
+    std::string fieldName;
+    std::string parserName;
+};
+
+bool isParserIdentifierCharacter(char value)
+{
+    const auto character = static_cast<unsigned char>(value);
+    return std::isalnum(character) != 0 || value == '_';
+}
+
+std::pair<std::string, std::vector<ParserFieldAlias>> aliasDashedFieldNames(
+    const std::string& expression, const std::vector<FieldMetadata>& fields)
+{
+    std::vector<ParserFieldAlias> aliases;
+    for (std::size_t index = 0; index < fields.size(); ++index) {
+        const auto& fieldName = fields[index].name;
+        if (fieldName.find('-') == std::string::npos) {
+            continue;
+        }
+
+        auto parserName = "amrvis_field_alias_" + std::to_string(index);
+        while (expression.find(parserName) != std::string::npos
+            || std::any_of(
+                fields.begin(), fields.end(),
+                [&parserName](const FieldMetadata& field) {
+                    return field.name == parserName;
+                })) {
+            parserName.push_back('_');
+        }
+        aliases.push_back({fieldName, std::move(parserName)});
+    }
+    std::sort(
+        aliases.begin(), aliases.end(),
+        [](const ParserFieldAlias& left, const ParserFieldAlias& right) {
+            return left.fieldName.size() > right.fieldName.size();
+        });
+
+    std::string rewritten;
+    rewritten.reserve(expression.size());
+    for (std::size_t position = 0; position < expression.size();) {
+        const auto match = std::find_if(
+            aliases.begin(), aliases.end(),
+            [&](const ParserFieldAlias& alias) {
+                const auto length = alias.fieldName.size();
+                if (expression.compare(position, length, alias.fieldName) != 0) {
+                    return false;
+                }
+                const auto beginsAtBoundary = position == 0
+                    || !isParserIdentifierCharacter(expression[position - 1]);
+                const auto end = position + length;
+                const auto endsAtBoundary = end == expression.size()
+                    || !isParserIdentifierCharacter(expression[end]);
+                return beginsAtBoundary && endsAtBoundary;
+            });
+        if (match == aliases.end()) {
+            rewritten.push_back(expression[position]);
+            ++position;
+        } else {
+            rewritten += match->parserName;
+            position += match->fieldName.size();
+        }
+    }
+    return {std::move(rewritten), std::move(aliases)};
+}
 
 template <std::size_t N>
 DerivedEvaluator makeEvaluator(const std::shared_ptr<amrexpr::Parser>& parser)
@@ -161,21 +228,31 @@ FieldId PlotfileDataset::addDerivedField(
 
     auto derived = std::make_shared<DerivedField>();
     derived->expression = definition.expression;
-    derived->parser = std::make_shared<amrexpr::Parser>(definition.expression);
+    auto [parserExpression, aliases] =
+        aliasDashedFieldNames(definition.expression, m_metadata->fields);
+    derived->parser = std::make_shared<amrexpr::Parser>(parserExpression);
 
     const auto symbols = derived->parser->symbols();
     std::vector<std::string> variables;
     variables.reserve(symbols.size());
     derived->inputs.reserve(symbols.size());
     for (const auto& symbol : symbols) {
+        const auto alias = std::find_if(
+            aliases.begin(), aliases.end(),
+            [&symbol](const ParserFieldAlias& candidate) {
+                return candidate.parserName == symbol;
+            });
+        const auto& fieldName =
+            alias == aliases.end() ? symbol : alias->fieldName;
         const auto input = std::find_if(
             m_metadata->fields.begin(), m_metadata->fields.end(),
-            [&symbol](const FieldMetadata& field) {
-                return field.name == symbol;
+            [&fieldName](const FieldMetadata& field) {
+                return field.name == fieldName;
             });
         if (input == m_metadata->fields.end()) {
             throw std::invalid_argument(
-                "unknown field '" + symbol + "' in derived-field expression");
+                "unknown field '" + fieldName
+                + "' in derived-field expression");
         }
         if (input->componentCount != 1) {
             throw std::invalid_argument(
