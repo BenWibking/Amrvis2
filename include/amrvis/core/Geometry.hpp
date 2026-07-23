@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 
 namespace amrvis {
@@ -73,6 +75,37 @@ struct RealBox {
 
     friend constexpr bool operator==(const RealBox&, const RealBox&) = default;
 };
+
+// Snap a physical region outward to cell boundaries along the given axes:
+// the lower edge floors and the upper edge ceils in the index space anchored
+// at domain.lower with the given cell size, and the result is clamped to
+// domain. Regions derived from screen-pixel selections land mid-cell;
+// sampling such a region at one pixel per cell lets pixel centers drift off
+// the cell centers until flooring assigns two pixels to one cell or skips
+// one. With edges on cell boundaries the extent is an exact multiple of the
+// cell size, so pixel centers coincide with cell centers and the floor is
+// robust. Expanding outward (rather than snapping nearest) never hides data
+// the selection included, and the snapped region always spans at least one
+// cell.
+[[nodiscard]] inline RealBox snapToCellBoundaries(
+    const RealBox& region, const RealBox& domain, const Real3& cellSize,
+    const std::array<int, 2>& axes)
+{
+    auto snapped = region;
+    for (const auto axis : axes) {
+        const auto i = static_cast<std::size_t>(axis);
+        const auto origin = domain.lower[i];
+        const auto dx = cellSize[i];
+        if (!(dx > 0.0)) {
+            continue;
+        }
+        snapped.lower[i] = std::max(origin,
+            origin + std::floor((region.lower[i] - origin) / dx) * dx);
+        snapped.upper[i] = std::min(domain.upper[i],
+            origin + std::ceil((region.upper[i] - origin) / dx) * dx);
+    }
+    return snapped;
+}
 
 } // namespace amrvis
 

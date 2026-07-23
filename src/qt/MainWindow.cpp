@@ -301,6 +301,16 @@ std::pair<double, double> resolveRange(
     return {minimum, maximum};
 }
 
+// Upper bound on slice output dimensions. One pixel per finest cell is the
+// ideal, but a plane costs on the order of 10 bytes per pixel (float value,
+// validity mask, source level, RGBA image), so uncapped native resolution on
+// huge domains could allocate gigabytes. Once the region edges are snapped
+// to cell boundaries (snapToCellBoundaries) the extent is an exact multiple
+// of the cell size, so when this cap does engage the sampling pitch only
+// ever exceeds the cell size — honest downsampling — and never produces
+// duplicated or skipped cells.
+constexpr int maxSliceOutputDimension = 4096;
+
 // Native render resolution for a slice: the count of finest-level cells the
 // visible region spans along each in-plane axis. At the 1x fixed scale this is
 // the resolution legacy Amrvis drew (one pixel per finest cell); the larger
@@ -324,8 +334,8 @@ std::array<int, 2> finestNativeOutputSize(
         const auto i = static_cast<std::size_t>(axis);
         const auto extent = region.upper[i] - region.lower[i];
         return std::clamp(
-            static_cast<int>(std::max(1.0, std::round(extent / finest.cellSize[i]))),
-            1, 2048);
+            static_cast<int>(std::round(extent / finest.cellSize[i])),
+            1, maxSliceOutputDimension);
     };
     return {cells(axes[0]), cells(axes[1])};
 }
@@ -2129,8 +2139,25 @@ void MainWindow::rubberBandZoom(PlaneViewState& state, const QRectF& sceneRect)
         + (height - clamped.bottom()) / height * yExtent;
     visible.upper[yAxis] = region.lower[yAxis]
         + (height - clamped.top()) / height * yExtent;
+    // The edges above land mid-cell. Snap them outward to finest-level cell
+    // boundaries so the slice output (one pixel per finest cell, see
+    // finestNativeOutputSize) samples exactly at cell centers; fractional
+    // edges make the sampling pitch differ from the cell size and produce
+    // duplicated or skipped rows/columns of cells.
+    const auto& metadata = m_dataset->metadata();
+    const auto& finest = metadata.levels[static_cast<std::size_t>(
+        std::max(0, metadata.finestLevel))];
+    visible = snapToCellBoundaries(
+        visible, metadata.physicalDomain, finest.cellSize, axes);
     state.visibleRegion = visible;
-    state.view->zoomToRect(clamped);
+    // Zoom to the snapped region mapped back to scene pixels, so the view
+    // transform matches the region the requested slice will actually cover.
+    const QRectF snappedScene(
+        QPointF((visible.lower[xAxis] - region.lower[xAxis]) / xExtent * width,
+            (region.upper[yAxis] - visible.upper[yAxis]) / yExtent * height),
+        QPointF((visible.upper[xAxis] - region.lower[xAxis]) / xExtent * width,
+            (region.upper[yAxis] - visible.lower[yAxis]) / yExtent * height));
+    state.view->zoomToRect(snappedScene.normalized());
     scheduleSliceRequest(state);
 }
 

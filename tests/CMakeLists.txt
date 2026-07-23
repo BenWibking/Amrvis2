@@ -2,6 +2,10 @@ add_executable(test_core_metadata unit/test_core_metadata.cpp)
 target_link_libraries(test_core_metadata PRIVATE Amrvis::core Amrvis::warnings)
 add_test(NAME core_metadata COMMAND test_core_metadata)
 
+add_executable(test_geometry unit/test_geometry.cpp)
+target_link_libraries(test_geometry PRIVATE Amrvis::core Amrvis::warnings)
+add_test(NAME geometry COMMAND test_geometry)
+
 add_executable(test_byte_lru_cache unit/test_byte_lru_cache.cpp)
 target_link_libraries(test_byte_lru_cache PRIVATE Amrvis::cache Amrvis::warnings)
 add_test(NAME byte_lru_cache COMMAND test_byte_lru_cache)

@@ -1,0 +1,107 @@
+#include <amrvis/core/Geometry.hpp>
+
+#include <cmath>
+#include <cstdlib>
+#include <iostream>
+
+namespace {
+
+void require(bool condition, const char* message)
+{
+    if (!condition) {
+        std::cerr << "FAILED: " << message << '\n';
+        std::exit(1);
+    }
+}
+
+bool nearlyEqual(double a, double b)
+{
+    return std::abs(a - b) <= 1e-12 * std::max(1.0, std::abs(b));
+}
+
+} // namespace
+
+int main()
+{
+    // 4x4 cells of size 0.25: exact binary arithmetic, no rounding noise.
+    const amrvis::RealBox domain{{{0.0, 0.0, 0.0}}, {{1.0, 1.0, 0.0}}};
+    const amrvis::Real3 cellSize{{0.25, 0.25, 1.0}};
+    const std::array<int, 2> axes{0, 1};
+
+    // Mid-cell edges expand outward to the surrounding cell boundaries.
+    {
+        const amrvis::RealBox region{{{0.3, 0.1, 0.0}}, {{0.7, 0.6, 0.0}}};
+        const auto snapped = amrvis::snapToCellBoundaries(
+            region, domain, cellSize, axes);
+        require(snapped.lower[0] == 0.25, "lower x did not floor to cell edge");
+        require(snapped.upper[0] == 0.75, "upper x did not ceil to cell edge");
+        require(snapped.lower[1] == 0.0, "lower y did not floor to cell edge");
+        require(snapped.upper[1] == 0.75, "upper y did not ceil to cell edge");
+        require(snapped.lower[2] == region.lower[2]
+            && snapped.upper[2] == region.upper[2],
+            "axis outside the list was modified");
+    }
+
+    // An already-aligned region is unchanged.
+    {
+        const amrvis::RealBox region{{{0.25, 0.5, 0.0}}, {{0.75, 1.0, 0.0}}};
+        const auto snapped = amrvis::snapToCellBoundaries(
+            region, domain, cellSize, axes);
+        require(snapped == region, "aligned region was modified");
+    }
+
+    // A selection inside a single cell snaps out to that whole cell.
+    {
+        const amrvis::RealBox region{{{0.3, 0.3, 0.0}}, {{0.4, 0.4, 0.0}}};
+        const auto snapped = amrvis::snapToCellBoundaries(
+            region, domain, cellSize, axes);
+        require(snapped.lower[0] == 0.25 && snapped.upper[0] == 0.5,
+            "single-cell selection did not snap to its cell in x");
+        require(snapped.lower[1] == 0.25 && snapped.upper[1] == 0.5,
+            "single-cell selection did not snap to its cell in y");
+    }
+
+    // A non-zero origin anchors the index space.
+    {
+        const amrvis::RealBox shiftedDomain{{{2.0, -1.0, 0.0}},
+            {{3.0, 0.0, 0.0}}};
+        const amrvis::RealBox region{{{2.3, -0.9, 0.0}}, {{2.7, -0.4, 0.0}}};
+        const auto snapped = amrvis::snapToCellBoundaries(
+            region, shiftedDomain, cellSize, axes);
+        require(snapped.lower[0] == 2.25 && snapped.upper[0] == 2.75,
+            "non-zero origin: wrong x snap");
+        require(snapped.lower[1] == -1.0 && snapped.upper[1] == -0.25,
+            "non-zero origin: wrong y snap");
+    }
+
+    // With a non-binary cell size the snapped edges still land on cell
+    // boundaries and the extent stays an exact multiple of the cell size —
+    // the property the slice sampler relies on.
+    {
+        const amrvis::Real3 tenth{{0.1, 0.1, 1.0}};
+        const amrvis::RealBox region{{{0.17, 0.23, 0.0}}, {{0.43, 0.61, 0.0}}};
+        const auto snapped = amrvis::snapToCellBoundaries(
+            region, domain, tenth, axes);
+        for (const auto axis : axes) {
+            const auto i = static_cast<std::size_t>(axis);
+            const auto lowerCells = (snapped.lower[i] - domain.lower[i])
+                / tenth[i];
+            const auto upperCells = (snapped.upper[i] - domain.lower[i])
+                / tenth[i];
+            require(nearlyEqual(lowerCells, std::round(lowerCells)),
+                "snapped lower edge is not on a cell boundary");
+            require(nearlyEqual(upperCells, std::round(upperCells)),
+                "snapped upper edge is not on a cell boundary");
+            require(nearlyEqual((snapped.upper[i] - snapped.lower[i]) / tenth[i],
+                std::round(upperCells) - std::round(lowerCells)),
+                "snapped extent is not an integer cell count");
+        }
+        require(snapped.lower[0] <= region.lower[0]
+            && snapped.upper[0] >= region.upper[0]
+            && snapped.lower[1] <= region.lower[1]
+            && snapped.upper[1] >= region.upper[1],
+            "snapped region does not contain the selection");
+    }
+
+    return 0;
+}
