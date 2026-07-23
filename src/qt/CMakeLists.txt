@@ -1,6 +1,7 @@
 add_executable(amrvis_qt
     AnimationPanel.cpp
     AnimationPanel.hpp
+    CacheConfig.hpp
     ColorBarWidget.cpp
     ColorBarWidget.hpp
     DatasetExtract.hpp
