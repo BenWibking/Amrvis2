@@ -146,6 +146,15 @@ int main()
         require(nearlyEqual(segment.value, 2.5), "segment value field mismatch");
     }
 
+    auto tinyPlane = makePlane();
+    for (auto& value : tinyPlane.values) {
+        value *= 1.0e-24F;
+    }
+    const auto tinySegments =
+        amrvis::generateContours(tinyPlane, {2.5e-24});
+    require(tinySegments.size() == 4,
+        "small-magnitude varying field was treated as constant");
+
     // Invalidating corner (1, 1) must suppress the four cells touching it,
     // leaving only cell (2, 0).
     auto masked = makePlane();

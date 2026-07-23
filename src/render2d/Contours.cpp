@@ -156,9 +156,9 @@ std::vector<ContourSegment> generateContours(
     // the contour levels collapse onto that single value and marching squares
     // marks every edge of every cell as crossed, tiling the image with spurious
     // saddle segments. Detect the flat case from the actual data instead. The
-    // threshold mirrors the range padding in resolveRange (1e-6 of the field
-    // scale); a field varying less than that is effectively constant, and its
-    // contours would be a visually solid mass anyway.
+    // Treat variation below 1e-6 of the field's own magnitude as effectively
+    // constant. Do not impose an absolute scale floor: fields such as density
+    // routinely have meaningful variation entirely below 1e-20.
     double dataMinimum = 0.0;
     double dataMaximum = 0.0;
     bool hasFinite = false;
@@ -183,7 +183,7 @@ std::vector<ContourSegment> generateContours(
         return segments;
     }
     const auto scale = std::max(
-        {std::fabs(dataMinimum), std::fabs(dataMaximum), 1.0});
+        std::fabs(dataMinimum), std::fabs(dataMaximum));
     if (dataMaximum - dataMinimum <= 1.0e-6 * scale) {
         return segments;
     }
