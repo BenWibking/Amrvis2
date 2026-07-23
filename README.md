@@ -76,6 +76,8 @@ VTK configuration and the bounded volume-query contract are implemented.
 
 - Open AMReX plotfile directories (2-D and 3-D) and standalone FAB/MultiFab
   headers
+- Read IEEE-32 and IEEE-64 FAB payloads in their native storage precision;
+  physical bounds, cell sizes, time, and view selections use double precision
 - Field and AMR level selection (finest available or one exact level)
 - Cell-by-cell derived scalar fields using AMReX parser expressions
 - Data ranges from the visible region, a level, or the whole file, plus
@@ -146,6 +148,16 @@ amrvis2 --smoke-test <plotfile>        # metadata only
 amrvis2 --slice-smoke-test <plotfile>  # metadata + initial slice
 amrvis2 --sequence-smoke-test <pltA> <pltB>
 ```
+
+Each open dataset gets a 1 GiB LRU cache by default. Set
+`AMRVIS_CACHE_SIZE_MB` to a positive integer number of megabytes (MiB) to
+change its initial size:
+
+```bash
+AMRVIS_CACHE_SIZE_MB=2048 amrvis2 plotfile-dir  # 2 GiB
+```
+
+An unset, invalid, or zero value retains the 1 GiB default.
 
 Preferences persist through QSettings (organization and application name
 Amrvis2), e.g. `~/.config/Amrvis2/Amrvis2.conf` on Linux.
