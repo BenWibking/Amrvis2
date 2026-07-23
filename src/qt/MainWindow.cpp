@@ -1,5 +1,6 @@
 #include "MainWindow.hpp"
 #include "AnimationPanel.hpp"
+#include "CacheConfig.hpp"
 #include "ColorBarWidget.hpp"
 #include "DatasetWindow.hpp"
 #include "ImageView.hpp"
@@ -94,8 +95,6 @@
 
 namespace amrvis::qt {
 namespace {
-
-constexpr std::uint64_t initialCacheBudget = 256ULL * 1024ULL * 1024ULL;
 
 // Sequence frame loads and prefetches get dataset ids from a dedicated range
 // so they never collide with the ids openDataset derives from m_generation.
@@ -630,6 +629,53 @@ LevelSelection decodeLevelData(int data, int finestLevel)
     return {CompositionPolicy::ExactLevel, data};
 }
 
+QString cacheBudgetDescription(std::uint64_t bytes)
+{
+    constexpr std::uint64_t kibibyte = 1024;
+    constexpr std::uint64_t mebibyte = 1024 * kibibyte;
+    constexpr std::uint64_t gibibyte = 1024 * mebibyte;
+    if (bytes % gibibyte == 0) {
+        return QObject::tr("%1 GiB").arg(bytes / gibibyte);
+    }
+    if (bytes % mebibyte == 0) {
+        return QObject::tr("%1 MiB").arg(bytes / mebibyte);
+    }
+    if (bytes % kibibyte == 0) {
+        return QObject::tr("%1 KiB").arg(bytes / kibibyte);
+    }
+    return QObject::tr("%1 bytes").arg(bytes);
+}
+
+QString cacheFallbackMessage(const InitialSliceResult& result)
+{
+    const auto budget = cacheBudgetDescription(
+        result.dataset->cacheMetrics().budgetBytes);
+    return QObject::tr(
+        "The finest slice exceeded the %1 cache budget. "
+        "The plotfile was opened using levels 0 through %2 instead of "
+        "levels 0 through %3; higher-resolution levels were omitted.")
+        .arg(budget)
+        .arg(result.cacheFallbackToLevel)
+        .arg(result.cacheFallbackFromLevel);
+}
+
+bool selectCacheFallbackLevel(
+    QComboBox* selector, const InitialSliceResult& result)
+{
+    if (result.cacheFallbackToLevel < 0) {
+        return false;
+    }
+    const auto data = result.cacheFallbackToLevel == 0
+        ? 0 : kUpdateToLevelOffset + result.cacheFallbackToLevel;
+    const auto index = selector->findData(data);
+    if (index < 0) {
+        return false;
+    }
+    const QSignalBlocker blocker(selector);
+    selector->setCurrentIndex(index);
+    return true;
+}
+
 void populateLevelCombo(QComboBox* combo, int finestLevel)
 {
     combo->clear();
@@ -687,8 +733,9 @@ InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
     DatasetId datasetId, const FrameSliceSpec& spec, StopToken cancellation)
 {
     InitialSliceResult result;
+    const auto cacheBudget = initialCacheBudget();
     result.dataset = std::make_shared<PlotfileDataset>(
-        path, datasetId, initialCacheBudget);
+        path, datasetId, cacheBudget);
     const auto& metadata = result.dataset->metadata();
     if (metadata.fields.empty()) {
         throw std::runtime_error("dataset has no scalar fields to display");
@@ -714,6 +761,9 @@ InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
                     <= metadata.finestLevel)
             ? spec.levelSelection
             : -1;
+    const auto selectedLevel = decodeLevelData(
+        levelSelection, metadata.finestLevel);
+    auto attemptMaximumLevel = selectedLevel.maximumLevel;
     std::array<double, 3> positions{0.0, 0.0, 0.0};
     for (std::size_t axis = 0; axis < 3; ++axis) {
         const auto lower = metadata.physicalDomain.lower[axis];
@@ -729,99 +779,124 @@ InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
     // keeps its single y-normal display plane.
     const std::vector<int> normals = metadata.dimension == 3
         ? std::vector<int>{0, 1, 2} : std::vector<int>{1};
-    result.displays.reserve(normals.size());
-    for (std::size_t entry = 0; entry < normals.size(); ++entry) {
-        const auto normal = normals[entry];
-        SliceRequest request;
-        request.dataset = datasetId;
-        request.field = FieldId{field};
-        request.normalDirection = normal;
-        // A preserved zoom region is clipped to the new frame's domain; if
-        // it no longer intersects at all, fall back to the whole domain.
-        auto region = entry < spec.visibleRegions.size()
-            && spec.visibleRegions[entry].has_value()
-                ? *spec.visibleRegions[entry] : metadata.physicalDomain;
-        for (int axis = 0; axis < metadata.dimension; ++axis) {
-            const auto index = static_cast<std::size_t>(axis);
-            auto lower = std::max(region.lower[index],
-                metadata.physicalDomain.lower[index]);
-            auto upper = std::min(region.upper[index],
-                metadata.physicalDomain.upper[index]);
-            if (!(lower < upper)) {
-                lower = metadata.physicalDomain.lower[index];
-                upper = metadata.physicalDomain.upper[index];
+    for (;;) {
+        try {
+            result.displays.clear();
+            result.displays.reserve(normals.size());
+            for (std::size_t entry = 0; entry < normals.size(); ++entry) {
+                const auto normal = normals[entry];
+                SliceRequest request;
+                request.dataset = datasetId;
+                request.field = FieldId{field};
+                request.normalDirection = normal;
+                // A preserved zoom region is clipped to the new frame's domain; if
+                // it no longer intersects at all, fall back to the whole domain.
+                auto region = entry < spec.visibleRegions.size()
+                    && spec.visibleRegions[entry].has_value()
+                        ? *spec.visibleRegions[entry] : metadata.physicalDomain;
+                for (int axis = 0; axis < metadata.dimension; ++axis) {
+                    const auto index = static_cast<std::size_t>(axis);
+                    auto lower = std::max(region.lower[index],
+                        metadata.physicalDomain.lower[index]);
+                    auto upper = std::min(region.upper[index],
+                        metadata.physicalDomain.upper[index]);
+                    if (!(lower < upper)) {
+                        lower = metadata.physicalDomain.lower[index];
+                        upper = metadata.physicalDomain.upper[index];
+                    }
+                    region.lower[index] = lower;
+                    region.upper[index] = upper;
+                }
+                request.visibleRegion = region;
+                request.outputSize = finestNativeOutputSize(
+                    metadata, request.visibleRegion, request.normalDirection);
+                request.composition = selectedLevel.composition;
+                request.maximumLevel = attemptMaximumLevel;
+                if (metadata.dimension == 3) {
+                    request.physicalPosition = positions[static_cast<std::size_t>(normal)];
+                }
+                auto display = executeSlice(result.dataset, request, spec.rangeMode,
+                    spec.userRange, spec.logarithmic, spec.palette, cancellation);
+                display.mode = spec.displayMode;
+                display.contourCount = spec.contourCount;
+                if (isContourMode(spec.displayMode)) {
+                    appendContours(result.dataset, request, spec.contourCount,
+                        display.minimum, display.maximum, display.logarithmic,
+                        cancellation, display);
+                }
+                if (spec.displayMode == DisplayMode::VelocityVectors) {
+                    const auto u = std::min(spec.vectorUField, fieldCount - 1);
+                    const auto v = std::min(spec.vectorVField, fieldCount - 1);
+                    const auto w = std::min(spec.vectorWField, fieldCount - 1);
+                    auto [f1, f2] = (metadata.dimension == 3)
+                        ? (normal == 0 ? std::pair{v, w}
+                           : normal == 1 ? std::pair{u, w}
+                           : std::pair{u, v})
+                        : std::pair{u, v};
+                    display.vectorUField = f1;
+                    display.vectorVField = f2;
+                    appendVectorGlyphs(result.dataset, request,
+                        FieldId{f1}, FieldId{f2},
+                        spec.contourCount, cancellation, display);
+                }
+                result.displays.push_back(std::move(display));
             }
-            region.lower[index] = lower;
-            region.upper[index] = upper;
-        }
-        request.visibleRegion = region;
-        request.outputSize = finestNativeOutputSize(
-            metadata, request.visibleRegion, request.normalDirection);
-        const auto [composition, maximumLevel] = decodeLevelData(
-            levelSelection, metadata.finestLevel);
-        request.composition = composition;
-        request.maximumLevel = maximumLevel;
-        if (metadata.dimension == 3) {
-            request.physicalPosition = positions[static_cast<std::size_t>(normal)];
-        }
-        auto display = executeSlice(result.dataset, request, spec.rangeMode,
-            spec.userRange, spec.logarithmic, spec.palette, cancellation);
-        display.mode = spec.displayMode;
-        display.contourCount = spec.contourCount;
-        if (isContourMode(spec.displayMode)) {
-            appendContours(result.dataset, request, spec.contourCount,
-                display.minimum, display.maximum, display.logarithmic,
-                cancellation, display);
-        }
-        if (spec.displayMode == DisplayMode::VelocityVectors) {
-            const auto u = std::min(spec.vectorUField, fieldCount - 1);
-            const auto v = std::min(spec.vectorVField, fieldCount - 1);
-            const auto w = std::min(spec.vectorWField, fieldCount - 1);
-            auto [f1, f2] = (metadata.dimension == 3)
-                ? (normal == 0 ? std::pair{v, w}
-                   : normal == 1 ? std::pair{u, w}
-                   : std::pair{u, v})
-                : std::pair{u, v};
-            display.vectorUField = f1;
-            display.vectorVField = f2;
-            appendVectorGlyphs(result.dataset, request,
-                FieldId{f1}, FieldId{f2},
-                spec.contourCount, cancellation, display);
-        }
-        result.displays.push_back(std::move(display));
-    }
-    // In 3-D, every views' "Visible" range must agree so the single color bar
-    // maps all three panels consistently. Compute the union of finite extrema
-    // across all three planes and re-render each display with the shared range.
-    if (result.displays.size() == 3 && spec.rangeMode == RangeMode::Visible) {
-        double globalMin = std::numeric_limits<double>::infinity();
-        double globalMax = -std::numeric_limits<double>::infinity();
-        for (const auto& d : result.displays) {
-            const auto [lo, hi] = finiteRange(d.slice.plane);
-            globalMin = std::min(globalMin, lo);
-            globalMax = std::max(globalMax, hi);
-        }
-        const auto logarithmic = spec.logarithmic;
-        if (globalMin == globalMax) {
-            if (logarithmic && globalMin > 0.0) {
-                globalMin /= 1.0 + 1.0e-6;
-                globalMax *= 1.0 + 1.0e-6;
-            } else {
-                const auto pad = std::max(std::abs(globalMin), 1.0) * 1.0e-6;
-                globalMin -= pad;
-                globalMax += pad;
+            // In 3-D, every views' "Visible" range must agree so the single color bar
+            // maps all three panels consistently. Compute the union of finite extrema
+            // across all three planes and re-render each display with the shared range.
+            if (result.displays.size() == 3 && spec.rangeMode == RangeMode::Visible) {
+                double globalMin = std::numeric_limits<double>::infinity();
+                double globalMax = -std::numeric_limits<double>::infinity();
+                for (const auto& d : result.displays) {
+                    const auto [lo, hi] = finiteRange(d.slice.plane);
+                    globalMin = std::min(globalMin, lo);
+                    globalMax = std::max(globalMax, hi);
+                }
+                const auto logarithmic = spec.logarithmic;
+                if (globalMin == globalMax) {
+                    if (logarithmic && globalMin > 0.0) {
+                        globalMin /= 1.0 + 1.0e-6;
+                        globalMax *= 1.0 + 1.0e-6;
+                    } else {
+                        const auto pad = std::max(std::abs(globalMin), 1.0) * 1.0e-6;
+                        globalMin -= pad;
+                        globalMax += pad;
+                    }
+                }
+                for (auto& d : result.displays) {
+                    d.minimum = globalMin;
+                    d.maximum = globalMax;
+                    d.image = renderScalarPlane(d.slice.plane,
+                        ScalarRenderSettings{
+                            .minimum = globalMin,
+                            .maximum = globalMax,
+                            .logarithmic = d.logarithmic,
+                            .palette = &spec.palette
+                        });
+                }
             }
-        }
-        for (auto& d : result.displays) {
-            d.minimum = globalMin;
-            d.maximum = globalMax;
-            d.image = renderScalarPlane(d.slice.plane,
-                ScalarRenderSettings{
-                    .minimum = globalMin,
-                    .maximum = globalMax,
-                    .logarithmic = d.logarithmic,
-                    .palette = &spec.palette
-                });
+            break;
+        } catch (const CacheBudgetExceeded&) {
+            result.displays.clear();
+            result.dataset->clearUnpinnedCache();
+            if (selectedLevel.composition != CompositionPolicy::FinestAvailable) {
+                throw std::runtime_error(QObject::tr(
+                    "The selected slice level cannot fit in the %1 cache. "
+                    "Choose a lower level or increase AMRVIS_CACHE_SIZE_MB.")
+                        .arg(cacheBudgetDescription(cacheBudget))
+                        .toStdString());
+            }
+            if (attemptMaximumLevel == 0) {
+                throw std::runtime_error(QObject::tr(
+                    "The slice cannot fit in the %1 cache, even at level 0. "
+                    "Try a smaller plotfile or increase AMRVIS_CACHE_SIZE_MB.")
+                        .arg(cacheBudgetDescription(cacheBudget))
+                        .toStdString());
+            }
+            if (result.cacheFallbackFromLevel < 0) {
+                result.cacheFallbackFromLevel = attemptMaximumLevel;
+            }
+            result.cacheFallbackToLevel = --attemptMaximumLevel;
         }
     }
     return result;
@@ -3388,6 +3463,10 @@ void MainWindow::requestInitialSlice(
                 if (generation == m_generation) {
                     m_dataset = result.dataset;
                     configureSliceControls();
+                    if (selectCacheFallbackLevel(m_levelSelector, result)) {
+                        configureSlicePositionControls();
+                        syncMenuChecks();
+                    }
                     if (result.displays.size() != views.size()) {
                         throw std::runtime_error(
                             "initial slice count does not match the view set");
@@ -3404,6 +3483,10 @@ void MainWindow::requestInitialSlice(
                     m_cacheResidentBytes = cache.residentBytes;
                     m_cachePinnedBytes = cache.pinnedBytes;
                     m_cacheEvictions = cache.evictions;
+                    if (result.cacheFallbackToLevel >= 0) {
+                        QMessageBox::warning(this, tr("Reduced level detail"),
+                            cacheFallbackMessage(result));
+                    }
                     emit initialSliceFinished(true);
                 } else {
                     ++m_staleResults;
@@ -4375,6 +4458,10 @@ void MainWindow::displayFrameResult(InitialSliceResult& result,
     showMetadata(frameMetadata, m_datasetPath);
 
     configureSequenceControls(defaultPositions);
+    if (selectCacheFallbackLevel(m_levelSelector, result)) {
+        configureSlicePositionControls();
+        syncMenuChecks();
+    }
     const auto views = currentViews();
     if (result.displays.size() != views.size()) {
         throw std::runtime_error("frame slice count does not match the view set");
@@ -4388,6 +4475,9 @@ void MainWindow::displayFrameResult(InitialSliceResult& result,
     m_cachePinnedBytes = cache.pinnedBytes;
     m_cacheEvictions = cache.evictions;
     validateVectorMode();
+    if (result.cacheFallbackToLevel >= 0) {
+        statusBar()->showMessage(cacheFallbackMessage(result));
+    }
 }
 
 void MainWindow::configureSequenceControls(bool defaultPositions)
