@@ -659,19 +659,21 @@ QString cacheFallbackMessage(const InitialSliceResult& result)
         .arg(result.cacheFallbackFromLevel);
 }
 
-void selectCacheFallbackLevel(
+bool selectCacheFallbackLevel(
     QComboBox* selector, const InitialSliceResult& result)
 {
     if (result.cacheFallbackToLevel < 0) {
-        return;
+        return false;
     }
     const auto data = result.cacheFallbackToLevel == 0
         ? 0 : kUpdateToLevelOffset + result.cacheFallbackToLevel;
     const auto index = selector->findData(data);
-    if (index >= 0) {
-        const QSignalBlocker blocker(selector);
-        selector->setCurrentIndex(index);
+    if (index < 0) {
+        return false;
     }
+    const QSignalBlocker blocker(selector);
+    selector->setCurrentIndex(index);
+    return true;
 }
 
 void populateLevelCombo(QComboBox* combo, int finestLevel)
@@ -3458,7 +3460,10 @@ void MainWindow::requestInitialSlice(
                 if (generation == m_generation) {
                     m_dataset = result.dataset;
                     configureSliceControls();
-                    selectCacheFallbackLevel(m_levelSelector, result);
+                    if (selectCacheFallbackLevel(m_levelSelector, result)) {
+                        configureSlicePositionControls();
+                        syncMenuChecks();
+                    }
                     if (result.displays.size() != views.size()) {
                         throw std::runtime_error(
                             "initial slice count does not match the view set");
@@ -4450,7 +4455,10 @@ void MainWindow::displayFrameResult(InitialSliceResult& result,
     showMetadata(frameMetadata, m_datasetPath);
 
     configureSequenceControls(defaultPositions);
-    selectCacheFallbackLevel(m_levelSelector, result);
+    if (selectCacheFallbackLevel(m_levelSelector, result)) {
+        configureSlicePositionControls();
+        syncMenuChecks();
+    }
     const auto views = currentViews();
     if (result.displays.size() != views.size()) {
         throw std::runtime_error("frame slice count does not match the view set");
@@ -4465,8 +4473,7 @@ void MainWindow::displayFrameResult(InitialSliceResult& result,
     m_cacheEvictions = cache.evictions;
     validateVectorMode();
     if (result.cacheFallbackToLevel >= 0) {
-        QMessageBox::warning(this, tr("Reduced level detail"),
-            cacheFallbackMessage(result));
+        statusBar()->showMessage(cacheFallbackMessage(result));
     }
 }
 
