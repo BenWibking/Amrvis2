@@ -1,5 +1,6 @@
 #include "MainWindow.hpp"
 #include "AnimationPanel.hpp"
+#include "CacheConfig.hpp"
 #include "ColorBarWidget.hpp"
 #include "DatasetWindow.hpp"
 #include "ImageView.hpp"
@@ -95,8 +96,6 @@
 
 namespace amrvis::qt {
 namespace {
-
-constexpr std::uint64_t initialCacheBudget = 1ULL * 1024ULL * 1024ULL * 1024ULL;
 
 // Sequence frame loads and prefetches get dataset ids from a dedicated range
 // so they never collide with the ids openDataset derives from m_generation.
@@ -631,29 +630,51 @@ LevelSelection decodeLevelData(int data, int finestLevel)
     return {CompositionPolicy::ExactLevel, data};
 }
 
+QString cacheBudgetDescription(std::uint64_t bytes)
+{
+    constexpr std::uint64_t kibibyte = 1024;
+    constexpr std::uint64_t mebibyte = 1024 * kibibyte;
+    constexpr std::uint64_t gibibyte = 1024 * mebibyte;
+    if (bytes % gibibyte == 0) {
+        return QObject::tr("%1 GiB").arg(bytes / gibibyte);
+    }
+    if (bytes % mebibyte == 0) {
+        return QObject::tr("%1 MiB").arg(bytes / mebibyte);
+    }
+    if (bytes % kibibyte == 0) {
+        return QObject::tr("%1 KiB").arg(bytes / kibibyte);
+    }
+    return QObject::tr("%1 bytes").arg(bytes);
+}
+
 QString cacheFallbackMessage(const InitialSliceResult& result)
 {
+    const auto budget = cacheBudgetDescription(
+        result.dataset->cacheMetrics().budgetBytes);
     return QObject::tr(
-        "The finest slice exceeded the 1 GiB cache budget. "
-        "The plotfile was opened using levels 0 through %1 instead of "
-        "levels 0 through %2; higher-resolution levels were omitted.")
+        "The finest slice exceeded the %1 cache budget. "
+        "The plotfile was opened using levels 0 through %2 instead of "
+        "levels 0 through %3; higher-resolution levels were omitted.")
+        .arg(budget)
         .arg(result.cacheFallbackToLevel)
         .arg(result.cacheFallbackFromLevel);
 }
 
-void selectCacheFallbackLevel(
+bool selectCacheFallbackLevel(
     QComboBox* selector, const InitialSliceResult& result)
 {
     if (result.cacheFallbackToLevel < 0) {
-        return;
+        return false;
     }
     const auto data = result.cacheFallbackToLevel == 0
         ? 0 : kUpdateToLevelOffset + result.cacheFallbackToLevel;
     const auto index = selector->findData(data);
-    if (index >= 0) {
-        const QSignalBlocker blocker(selector);
-        selector->setCurrentIndex(index);
+    if (index < 0) {
+        return false;
     }
+    const QSignalBlocker blocker(selector);
+    selector->setCurrentIndex(index);
+    return true;
 }
 
 void populateLevelCombo(QComboBox* combo, int finestLevel)
@@ -713,8 +734,9 @@ InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
     DatasetId datasetId, const FrameSliceSpec& spec, StopToken cancellation)
 {
     InitialSliceResult result;
+    const auto cacheBudget = initialCacheBudget();
     result.dataset = std::make_shared<PlotfileDataset>(
-        path, datasetId, initialCacheBudget);
+        path, datasetId, cacheBudget);
     for (const auto& [name, expression] : spec.derivedFields) {
         [[maybe_unused]] const auto field = result.dataset->addDerivedField({
             .name = name,
@@ -865,14 +887,18 @@ InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
             result.displays.clear();
             result.dataset->clearUnpinnedCache();
             if (selectedLevel.composition != CompositionPolicy::FinestAvailable) {
-                throw std::runtime_error(
-                    "The selected slice level cannot fit in the 1 GiB cache. "
-                    "Choose a lower level or rebuild with a larger cache budget.");
+                throw std::runtime_error(QObject::tr(
+                    "The selected slice level cannot fit in the %1 cache. "
+                    "Choose a lower level or increase AMRVIS_CACHE_SIZE_MB.")
+                        .arg(cacheBudgetDescription(cacheBudget))
+                        .toStdString());
             }
             if (attemptMaximumLevel == 0) {
-                throw std::runtime_error(
-                    "The slice cannot fit in the 1 GiB cache, even at level 0. "
-                    "Try a smaller plotfile or rebuild with a larger cache budget.");
+                throw std::runtime_error(QObject::tr(
+                    "The slice cannot fit in the %1 cache, even at level 0. "
+                    "Try a smaller plotfile or increase AMRVIS_CACHE_SIZE_MB.")
+                        .arg(cacheBudgetDescription(cacheBudget))
+                        .toStdString());
             }
             if (result.cacheFallbackFromLevel < 0) {
                 result.cacheFallbackFromLevel = attemptMaximumLevel;
@@ -3771,7 +3797,10 @@ void MainWindow::requestInitialSlice(
                     m_particleSamples = std::move(result.particles);
                     configureParticleControls(false);
                     configureSliceControls();
-                    selectCacheFallbackLevel(m_levelSelector, result);
+                    if (selectCacheFallbackLevel(m_levelSelector, result)) {
+                        configureSlicePositionControls();
+                        syncMenuChecks();
+                    }
                     if (result.displays.size() != views.size()) {
                         throw std::runtime_error(
                             "initial slice count does not match the view set");
@@ -4773,7 +4802,10 @@ void MainWindow::displayFrameResult(InitialSliceResult& result,
     showMetadata(frameMetadata, m_datasetPath);
 
     configureSequenceControls(defaultPositions);
-    selectCacheFallbackLevel(m_levelSelector, result);
+    if (selectCacheFallbackLevel(m_levelSelector, result)) {
+        configureSlicePositionControls();
+        syncMenuChecks();
+    }
     const auto views = currentViews();
     if (result.displays.size() != views.size()) {
         throw std::runtime_error("frame slice count does not match the view set");
@@ -4788,8 +4820,7 @@ void MainWindow::displayFrameResult(InitialSliceResult& result,
     m_cacheEvictions = cache.evictions;
     validateVectorMode();
     if (result.cacheFallbackToLevel >= 0) {
-        QMessageBox::warning(this, tr("Reduced level detail"),
-            cacheFallbackMessage(result));
+        statusBar()->showMessage(cacheFallbackMessage(result));
     }
 }
 

@@ -151,5 +151,15 @@ amrvis2 --slice-smoke-test <plotfile>  # metadata + initial slice
 amrvis2 --sequence-smoke-test <pltA> <pltB>
 ```
 
+Each open dataset gets a 1 GiB LRU cache by default. Set
+`AMRVIS_CACHE_SIZE_MB` to a positive integer number of megabytes (MiB) to
+change its initial size:
+
+```bash
+AMRVIS_CACHE_SIZE_MB=2048 amrvis2 plotfile-dir  # 2 GiB
+```
+
+An unset, invalid, or zero value retains the 1 GiB default.
+
 Preferences persist through QSettings (organization and application name
 Amrvis2), e.g. `~/.config/Amrvis2/Amrvis2.conf` on Linux.
