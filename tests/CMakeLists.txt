@@ -17,6 +17,14 @@ add_executable(test_byte_lru_cache unit/test_byte_lru_cache.cpp)
 target_link_libraries(test_byte_lru_cache PRIVATE Amrvis::cache Amrvis::warnings)
 add_test(NAME byte_lru_cache COMMAND test_byte_lru_cache)
 
+add_executable(test_cache_config unit/test_cache_config.cpp)
+target_include_directories(test_cache_config PRIVATE "${CMAKE_SOURCE_DIR}/src/qt")
+target_link_libraries(test_cache_config PRIVATE Amrvis::warnings)
+add_test(NAME cache_config COMMAND test_cache_config)
+set_tests_properties(cache_config PROPERTIES
+    ENVIRONMENT "AMRVIS_CACHE_SIZE_MB=768"
+)
+
 add_executable(test_scalar_renderer unit/test_scalar_renderer.cpp)
 target_link_libraries(test_scalar_renderer PRIVATE Amrvis::render2d Amrvis::warnings)
 add_test(NAME scalar_renderer COMMAND test_scalar_renderer)
@@ -57,6 +65,16 @@ add_test(NAME selective_block_read COMMAND test_selective_block_read)
 add_executable(test_particle_reader integration/test_particle_reader.cpp)
 target_link_libraries(test_particle_reader PRIVATE Amrvis::io Amrvis::warnings)
 add_test(NAME particle_reader COMMAND test_particle_reader)
+
+add_executable(
+    test_single_precision_plotfile
+    integration/test_single_precision_plotfile.cpp
+)
+target_link_libraries(
+    test_single_precision_plotfile
+    PRIVATE Amrvis::query Amrvis::warnings
+)
+add_test(NAME single_precision_plotfile COMMAND test_single_precision_plotfile)
 
 add_executable(test_slice_query integration/test_slice_query.cpp)
 target_link_libraries(test_slice_query PRIVATE Amrvis::query Amrvis::warnings)
