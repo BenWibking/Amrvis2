@@ -5,6 +5,7 @@
 #include "SetContoursDialog.hpp"
 
 #include <amrvis/core/Result.hpp>
+#include <amrvis/core/StopToken.hpp>
 #include <amrvis/io/PlotfileMetadataReader.hpp>
 #include <amrvis/query/SliceQuery.hpp>
 #include <amrvis/render2d/Contours.hpp>
@@ -22,7 +23,6 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
-#include <stop_token>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -35,7 +35,6 @@ class QCloseEvent;
 class QColor;
 class QComboBox;
 class QDockWidget;
-class QDoubleSpinBox;
 class QLabel;
 class QSpinBox;
 class QLineF;
@@ -64,6 +63,7 @@ class DatasetWindow;
 class ImageView;
 class IsoWidget;
 class LinePlotWindow;
+class ScientificDoubleSpinBox;
 
 enum class RangeMode {
     Visible,
@@ -198,7 +198,7 @@ private:
         std::uint32_t cachedVectorUField = 0;
         std::uint32_t cachedVectorVField = 0;
         int cachedContourCount = 0;
-        std::stop_source stopSource;
+        StopSource stopSource;
         std::uint64_t sliceGeneration = 0;
         // Slice requests currently on a worker for this view; the sweep
         // playback skips ticks while one is in flight.
@@ -373,7 +373,7 @@ private:
     LinePlotWindow* m_linePlotWindow = nullptr;
     // Cancels in-flight line-plot queries on dataset switch or window close so
     // a late result neither reopens a closed window nor wastes I/O.
-    std::stop_source m_linePlotStopSource;
+    StopSource m_linePlotStopSource;
     DatasetWindow* m_datasetWindow = nullptr;
     SetContoursDialog* m_contoursDialog = nullptr;
     QDialog* m_numberFormatDialog = nullptr;
@@ -382,8 +382,8 @@ private:
     QComboBox* m_rangeMode = nullptr;
     QComboBox* m_paletteSelector = nullptr;
     QCheckBox* m_logarithmic = nullptr;
-    QDoubleSpinBox* m_rangeMinimum = nullptr;
-    QDoubleSpinBox* m_rangeMaximum = nullptr;
+    ScientificDoubleSpinBox* m_rangeMinimum = nullptr;
+    ScientificDoubleSpinBox* m_rangeMaximum = nullptr;
     // Per-field range state for the current dataset. m_trackedField is the
     // field the range widgets currently represent; the field selector swaps
     // snapshots through this map when the user changes fields.
@@ -461,7 +461,7 @@ private:
     std::vector<PlaneViewState*> m_pendingViews;
     // OR of the rasterDirty flags of the coalesced pending requests.
     bool m_pendingRasterDirty = false;
-    std::stop_source m_initialStopSource;
+    StopSource m_initialStopSource;
     DisplayMode m_displayMode = DisplayMode::Raster;
     int m_contourCount = 15;
     int m_contourColor = contourColorBlack;
@@ -503,7 +503,7 @@ private:
     // prefetch watcher knows to drop its result.
     std::uint64_t m_prefetchGeneration = 0;
     std::uint64_t m_sequenceDatasetCounter = 0;
-    std::stop_source m_prefetchStopSource;
+    StopSource m_prefetchStopSource;
     std::optional<PrefetchedFrame> m_prefetched;
     QElapsedTimer m_frameTimer;
     qint64 m_lastFrameSwitchMs = 0;

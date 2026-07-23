@@ -14,7 +14,8 @@
 
 namespace amrvis {
 
-std::vector<double> contourValues(double minimum, double maximum, int count)
+std::vector<double> contourValues(
+    double minimum, double maximum, int count, bool logarithmic)
 {
     if (count < 1) {
         throw std::invalid_argument("contour count must be positive");
@@ -22,11 +23,18 @@ std::vector<double> contourValues(double minimum, double maximum, int count)
     if (!(minimum < maximum)) {
         throw std::invalid_argument("contour range must have positive extent");
     }
+    if (logarithmic && !(minimum > 0.0)) {
+        throw std::invalid_argument("logarithmic contour range must be positive");
+    }
     std::vector<double> values(static_cast<std::size_t>(count));
-    const double span = maximum - minimum;
+    const double rangeMinimum = logarithmic ? std::log(minimum) : minimum;
+    const double rangeMaximum = logarithmic ? std::log(maximum) : maximum;
+    const double span = rangeMaximum - rangeMinimum;
     for (int i = 0; i < count; ++i) {
+        const auto value = rangeMinimum
+            + (0.5 + static_cast<double>(i)) / count * span;
         values[static_cast<std::size_t>(i)] =
-            minimum + (0.5 + static_cast<double>(i)) / count * span;
+            logarithmic ? std::exp(value) : value;
     }
     return values;
 }
@@ -156,9 +164,9 @@ std::vector<ContourSegment> generateContours(
     // the contour levels collapse onto that single value and marching squares
     // marks every edge of every cell as crossed, tiling the image with spurious
     // saddle segments. Detect the flat case from the actual data instead. The
-    // threshold mirrors the range padding in resolveRange (1e-6 of the field
-    // scale); a field varying less than that is effectively constant, and its
-    // contours would be a visually solid mass anyway.
+    // Treat variation below 1e-6 of the field's own magnitude as effectively
+    // constant. Do not impose an absolute scale floor: fields such as density
+    // routinely have meaningful variation entirely below 1e-20.
     double dataMinimum = 0.0;
     double dataMaximum = 0.0;
     bool hasFinite = false;
@@ -183,7 +191,7 @@ std::vector<ContourSegment> generateContours(
         return segments;
     }
     const auto scale = std::max(
-        {std::fabs(dataMinimum), std::fabs(dataMaximum), 1.0});
+        std::fabs(dataMinimum), std::fabs(dataMaximum));
     if (dataMaximum - dataMinimum <= 1.0e-6 * scale) {
         return segments;
     }

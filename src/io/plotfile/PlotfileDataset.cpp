@@ -227,7 +227,7 @@ bool PlotfileDataset::isDerivedField(FieldId field) const noexcept
 }
 
 PlotfileDataset::BlockAccess PlotfileDataset::requestBlock(
-    const BlockRequest& request, std::stop_token cancellation)
+    const BlockRequest& request, StopToken cancellation)
 {
     if (request.dataset != m_id) {
         throw BlockReadError("block request targets a different dataset");

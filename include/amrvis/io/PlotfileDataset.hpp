@@ -2,6 +2,7 @@
 
 #include <amrvis/cache/BlockKey.hpp>
 #include <amrvis/cache/ByteLruCache.hpp>
+#include <amrvis/core/StopToken.hpp>
 #include <amrvis/io/PlotfileBlockReader.hpp>
 #include <amrvis/io/PlotfileMetadataReader.hpp>
 
@@ -43,7 +44,7 @@ public:
     [[nodiscard]] bool isDerivedField(FieldId field) const noexcept;
 
     [[nodiscard]] BlockAccess requestBlock(
-        const BlockRequest& request, std::stop_token cancellation = {});
+        const BlockRequest& request, StopToken cancellation = {});
 
     [[nodiscard]] CacheMetrics cacheMetrics() const;
     [[nodiscard]] bool setCacheBudget(std::uint64_t bytes);
