@@ -49,6 +49,16 @@
       "cacheVariables": {
         "AMRVIS_ENABLE_SANITIZERS": "ON"
       }
+    },
+    {
+      "name": "wire-prototype",
+      "inherits": "headless",
+      "displayName": "Headless FlatBuffers wire prototype",
+      "binaryDir": "${sourceDir}/build-wire-prototype",
+      "cacheVariables": {
+        "AMRVIS_ENABLE_WIRE_PROTOTYPE": "ON",
+        "AMRVIS_BUILD_TESTS": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -67,6 +77,10 @@
     {
       "name": "sanitizers",
       "configurePreset": "sanitizers"
+    },
+    {
+      "name": "wire-prototype",
+      "configurePreset": "wire-prototype"
     }
   ],
   "testPresets": [
