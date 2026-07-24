@@ -32,7 +32,7 @@ public:
         const noexcept;
     [[nodiscard]] ParticleSample requestParticleSample(
         const std::string& species, double fraction, std::uint64_t seed = 0,
-        std::stop_token cancellation = {}) const;
+        StopToken cancellation = {}) const;
 
     [[nodiscard]] BlockAccess requestBlock(
         const BlockRequest& request, StopToken cancellation = {});

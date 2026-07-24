@@ -484,7 +484,7 @@ private:
     double m_particleFraction = 1.0;
     int m_particlePointSize = 3;
     bool m_particleSelectionInitialized = false;
-    std::stop_source m_particleStopSource;
+    StopSource m_particleStopSource;
     std::uint64_t m_particleGeneration = 0;
     std::filesystem::path m_datasetPath;
     Palette m_palette = builtinPalette(BuiltinPalette::Rainbow);

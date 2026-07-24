@@ -1,11 +1,11 @@
 #pragma once
 
 #include <amrvis/core/Geometry.hpp>
+#include <amrvis/core/StopToken.hpp>
 
 #include <cstdint>
 #include <filesystem>
 #include <stdexcept>
-#include <stop_token>
 #include <string>
 #include <vector>
 
@@ -49,6 +49,6 @@ public:
 [[nodiscard]] ParticleSample readParticleSample(
     const std::filesystem::path& plotfile, const std::string& species,
     double fraction, std::uint64_t seed = 0,
-    std::stop_token cancellation = {});
+    StopToken cancellation = {});
 
 } // namespace amrvis

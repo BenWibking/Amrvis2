@@ -2093,7 +2093,7 @@ void MainWindow::configureParticleControls(bool preserveSelection)
 void MainWindow::requestParticleReload()
 {
     m_particleStopSource.request_stop();
-    m_particleStopSource = std::stop_source{};
+    m_particleStopSource = StopSource{};
     const auto cancellation = m_particleStopSource.get_token();
     const auto dataset = m_dataset;
     const auto selectedSpecies = m_selectedParticleSpecies;

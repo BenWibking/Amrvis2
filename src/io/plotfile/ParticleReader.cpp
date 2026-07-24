@@ -220,7 +220,7 @@ std::filesystem::path particleDataPath(
 template <typename Real>
 void readGrid(const std::filesystem::path& dataPath, const GridRecord& grid,
     const ParsedHeader& header, double fraction, std::uint64_t seed,
-    std::stop_token cancellation, std::vector<ParticlePoint>& output)
+    StopToken cancellation, std::vector<ParticlePoint>& output)
 {
     std::ifstream input(dataPath, std::ios::binary);
     if (!input) {
@@ -320,7 +320,7 @@ std::vector<ParticleSpeciesMetadata> discoverParticleSpecies(
 
 ParticleSample readParticleSample(
     const std::filesystem::path& plotfile, const std::string& species,
-    double fraction, std::uint64_t seed, std::stop_token cancellation)
+    double fraction, std::uint64_t seed, StopToken cancellation)
 {
     if (!std::isfinite(fraction) || fraction < 0.0 || fraction > 1.0) {
         throw std::invalid_argument("particle sample fraction must be between 0 and 1");
