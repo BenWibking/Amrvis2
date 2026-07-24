@@ -835,7 +835,29 @@ InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
     }
 
     const auto fieldCount = static_cast<std::uint32_t>(metadata.fields.size());
-    const auto field = std::min(spec.field, fieldCount - 1);
+    const auto resolveField = [&](const std::string& name,
+                                  std::uint32_t fallback) {
+        if (!name.empty()) {
+            const auto found = std::find_if(metadata.fields.begin(),
+                metadata.fields.end(), [&name](const FieldMetadata& candidate) {
+                    return candidate.name == name;
+                });
+            if (found != metadata.fields.end()) {
+                return static_cast<std::uint32_t>(
+                    std::distance(metadata.fields.begin(), found));
+            }
+            return 0U;
+        }
+        return std::min(fallback, fieldCount - 1);
+    };
+    result.field = resolveField(spec.fieldName, spec.field);
+    result.vectorUField =
+        resolveField(spec.vectorUFieldName, spec.vectorUField);
+    result.vectorVField =
+        resolveField(spec.vectorVFieldName, spec.vectorVField);
+    result.vectorWField =
+        resolveField(spec.vectorWFieldName, spec.vectorWField);
+    const auto field = result.field;
     // An out-of-range exact level falls back to finest-available, matching
     // the level combo's behavior when a frame has fewer levels.
     // Combo data encoding: -1=finest, N=level N only, 1000+N=update to N.
@@ -914,9 +936,9 @@ InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
                         cancellation, display);
                 }
                 if (spec.displayMode == DisplayMode::VelocityVectors) {
-                    const auto u = std::min(spec.vectorUField, fieldCount - 1);
-                    const auto v = std::min(spec.vectorVField, fieldCount - 1);
-                    const auto w = std::min(spec.vectorWField, fieldCount - 1);
+                    const auto u = result.vectorUField;
+                    const auto v = result.vectorVField;
+                    const auto w = result.vectorWField;
                     auto [f1, f2] = (metadata.dimension == 3)
                         ? (normal == 0 ? std::pair{v, w}
                            : normal == 1 ? std::pair{u, w}
@@ -4223,14 +4245,17 @@ void MainWindow::requestInitialSlice(
                 if (generation == m_generation) {
                     m_dataset = result.dataset;
                     m_derivedFields = result.derivedFields;
+                    m_vectorUField = static_cast<int>(result.vectorUField);
+                    m_vectorVField = static_cast<int>(result.vectorVField);
+                    m_vectorWField = static_cast<int>(result.vectorWField);
                     configureSliceControls();
                     if (restoredSpec) {
                         const QSignalBlocker fieldBlocker(m_fieldSelector);
                         const QSignalBlocker levelBlocker(m_levelSelector);
                         const QSignalBlocker rangeBlocker(m_rangeMode);
                         const QSignalBlocker logBlocker(m_logarithmic);
-                        const auto fieldIndex = m_fieldSelector->findData(
-                            restoredSpec->field);
+                        const auto fieldIndex =
+                            m_fieldSelector->findData(result.field);
                         if (fieldIndex >= 0) {
                             m_fieldSelector->setCurrentIndex(fieldIndex);
                         }
@@ -5265,6 +5290,9 @@ void MainWindow::displayFrameResult(InitialSliceResult& result,
     m_dataset = result.dataset;
     const auto& metadata = m_dataset->metadata();
     m_viewDimension = metadata.dimension;
+    m_vectorUField = static_cast<int>(result.vectorUField);
+    m_vectorVField = static_cast<int>(result.vectorVField);
+    m_vectorWField = static_cast<int>(result.vectorWField);
 
     // Refresh the metadata dock and the window title (frame name + time).
     PlotfileMetadataResult frameMetadata;
@@ -5275,6 +5303,13 @@ void MainWindow::displayFrameResult(InitialSliceResult& result,
     showMetadata(frameMetadata, m_datasetPath);
 
     configureSequenceControls(defaultPositions);
+    {
+        const QSignalBlocker blocker(m_fieldSelector);
+        const auto fieldIndex = m_fieldSelector->findData(result.field);
+        m_fieldSelector->setCurrentIndex(fieldIndex >= 0 ? fieldIndex : 0);
+    }
+    m_trackedField = m_fieldSelector->currentData().toUInt();
+    rebuildVariableMenu();
     if (selectCacheFallbackLevel(m_levelSelector, result)) {
         configureSlicePositionControls();
         updateRangeModeAvailability();
@@ -5307,11 +5342,9 @@ void MainWindow::configureSequenceControls(bool defaultPositions)
         return;
     }
     const auto& metadata = m_dataset->metadata();
-    // Preserve the user's selections across frames: the field index if it
-    // still exists, the level by its combo data (falling back to finest
-    // available when this frame has fewer levels).
-    const auto previousField = m_controlsReady && m_fieldSelector->count() > 0
-        ? m_fieldSelector->currentIndex() : 0;
+    // displayFrameResult applies the field ID already resolved by stable name.
+    // Preserve the level by its combo data, falling back to finest available
+    // when this frame has fewer levels.
     const auto previousLevel = m_controlsReady
         && m_levelSelector->currentIndex() >= 0
             ? m_levelSelector->currentData().toInt() : -1;
@@ -5324,8 +5357,7 @@ void MainWindow::configureSequenceControls(bool defaultPositions)
                 QString::fromStdString(metadata.fields[field].name),
                 static_cast<unsigned int>(field));
         }
-        m_fieldSelector->setCurrentIndex(
-            std::clamp(previousField, 0, m_fieldSelector->count() - 1));
+        m_fieldSelector->setCurrentIndex(0);
         m_levelSelector->clear();
         populateLevelCombo(m_levelSelector, metadata.finestLevel);
         const auto levelIndex = m_levelSelector->findData(previousLevel);
@@ -5504,6 +5536,16 @@ FrameSliceSpec MainWindow::buildFrameSpec()
     spec.vectorUField = static_cast<std::uint32_t>(std::max(m_vectorUField, 0));
     spec.vectorVField = static_cast<std::uint32_t>(std::max(m_vectorVField, 0));
     spec.vectorWField = static_cast<std::uint32_t>(std::max(m_vectorWField, 0));
+    if (m_dataset) {
+        const auto& fields = m_dataset->metadata().fields;
+        const auto fieldName = [&fields](std::uint32_t field) {
+            return field < fields.size() ? fields[field].name : std::string();
+        };
+        spec.fieldName = fieldName(spec.field);
+        spec.vectorUFieldName = fieldName(spec.vectorUField);
+        spec.vectorVFieldName = fieldName(spec.vectorVField);
+        spec.vectorWFieldName = fieldName(spec.vectorWField);
+    }
     spec.derivedFields = m_derivedFields;
     // Slice positions only carry over between 3-D frames; anything else
     // starts the new dataset at its domain midpoints.

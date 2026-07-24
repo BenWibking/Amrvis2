@@ -348,6 +348,48 @@ bool applyExpressionDefinition(amrvis::qt::MainWindow& window,
     return completed;
 }
 
+bool applyExpressionDefinitions(amrvis::qt::MainWindow& window,
+    const std::vector<std::pair<QString, QString>>& definitions)
+{
+    auto* action = window.findChild<QAction*>(
+        QStringLiteral("expressionEditorAction"));
+    if (action == nullptr) {
+        return false;
+    }
+    bool completed = false;
+    QTimer::singleShot(0, &window, [&] {
+        auto* dialog = window.findChild<QDialog*>(
+            QStringLiteral("expressionEditor"));
+        if (dialog == nullptr) {
+            return;
+        }
+        auto* add = dialog->findChild<QPushButton*>(
+            QStringLiteral("newExpressionButton"));
+        auto* list = dialog->findChild<QListWidget*>(
+            QStringLiteral("expressionList"));
+        auto* name = dialog->findChild<QLineEdit*>(
+            QStringLiteral("expressionName"));
+        auto* source = dialog->findChild<QPlainTextEdit*>(
+            QStringLiteral("expressionSource"));
+        auto* apply = dialog->findChild<QPushButton*>(
+            QStringLiteral("applyExpressionsButton"));
+        if (add == nullptr || list == nullptr || name == nullptr
+            || source == nullptr || apply == nullptr || list->count() != 0) {
+            dialog->reject();
+            return;
+        }
+        for (const auto& [fieldName, parserExpression] : definitions) {
+            add->click();
+            name->setText(fieldName);
+            source->setPlainText(parserExpression);
+        }
+        completed = true;
+        apply->click();
+    });
+    action->trigger();
+    return completed;
+}
+
 bool expressionDefinitionMatches(amrvis::qt::MainWindow& window,
     const QString& fieldName, const QString& parserExpression)
 {
@@ -758,17 +800,39 @@ int main(int argc, char* argv[])
             [&window, path] { window.openDataset(path); });
     } else if (argc == 4
         && std::string_view(argv[1]) == "--sequence-smoke-test") {
-        // Opens the two-frame sequence, waits for the first frame to display,
-        // steps to frame 1 through the same slot the step button uses, and
-        // exits 0 once frame 1 is on screen.
+        // The second fixture renames density, so the first derived definition
+        // is skipped there. The selected later definition must still be
+        // restored by name after the remaining derived IDs compact.
         const std::filesystem::path first(argv[2]);
         const std::filesystem::path second(argv[3]);
         QObject::connect(&window, &amrvis::qt::MainWindow::sequenceFrameDisplayed,
             &application, [&window, &application](int index) {
                 if (index == 0) {
+                    auto* fieldSelector = window.findChild<QComboBox*>(
+                        QStringLiteral("fieldSelector"));
+                    if (fieldSelector == nullptr
+                        || !applyExpressionDefinitions(window, {
+                            {QStringLiteral("derived-a"),
+                                QStringLiteral("2*density")},
+                            {QStringLiteral("derived-b"),
+                                QStringLiteral("3*temperature")},
+                            {QStringLiteral("derived-c"),
+                                QStringLiteral("4*temperature")}})
+                        || fieldSelector->findText(
+                            QStringLiteral("derived-b")) < 0) {
+                        application.exit(1);
+                        return;
+                    }
+                    fieldSelector->setCurrentIndex(fieldSelector->findText(
+                        QStringLiteral("derived-b")));
                     window.stepSequence(1);
                 } else if (index == 1) {
-                    application.exit(0);
+                    const auto* fieldSelector = window.findChild<QComboBox*>(
+                        QStringLiteral("fieldSelector"));
+                    application.exit(fieldSelector != nullptr
+                            && fieldSelector->currentText()
+                                == QStringLiteral("derived-b")
+                        ? 0 : 1);
                 }
             });
         QObject::connect(&window, &amrvis::qt::MainWindow::sequenceFrameFailed,

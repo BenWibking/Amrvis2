@@ -105,6 +105,12 @@ struct SliceDisplayResult {
 
 struct InitialSliceResult {
     std::shared_ptr<PlotfileDataset> dataset;
+    // Field selections resolved against this dataset's metadata. Sequence
+    // frames can skip invalid derived definitions, which changes numeric IDs.
+    std::uint32_t field = 0;
+    std::uint32_t vectorUField = 0;
+    std::uint32_t vectorVField = 0;
+    std::uint32_t vectorWField = 0;
     // Definitions successfully installed in dataset, in dependency order.
     std::vector<std::pair<std::string, std::string>> derivedFields;
     // One entry per displayed view, ordered by normal axis (2-D: one entry).
@@ -128,6 +134,7 @@ struct InitialSliceResult {
 struct FrameSliceSpec {
     DisplayMode displayMode = DisplayMode::Raster;
     std::uint32_t field = 0;
+    std::string fieldName;
     int levelSelection = -1;  // level combo data: -1 = finest available
     RangeMode rangeMode = RangeMode::File;
     std::optional<std::pair<double, double>> userRange;
@@ -136,6 +143,9 @@ struct FrameSliceSpec {
     std::uint32_t vectorUField = 0;
     std::uint32_t vectorVField = 0;
     std::uint32_t vectorWField = 0;
+    std::string vectorUFieldName;
+    std::string vectorVFieldName;
+    std::string vectorWFieldName;
     int contourCount = 10;
     bool defaultPositions = true;
     std::array<double, 3> slicePositions{0.0, 0.0, 0.0};
