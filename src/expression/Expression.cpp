@@ -1,14 +1,14 @@
 #include <amrvis/expression/Expression.hpp>
 
 #include <algorithm>
-#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <locale>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
-#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -72,7 +72,7 @@ enum class TokenKind : std::uint8_t {
 struct Token {
     TokenKind kind = TokenKind::End;
     std::size_t offset = 0;
-    std::string_view text;
+    std::string_view text{};
     double number = 0.0;
 };
 
@@ -203,14 +203,13 @@ private:
 
         const auto text = m_source.substr(offset, m_position - offset);
         double result = 0.0;
-        const auto conversion = std::from_chars(
-            text.data(), text.data() + text.size(), result,
-            std::chars_format::general);
-        if (conversion.ec == std::errc::result_out_of_range) {
+        std::istringstream conversion(std::string{text});
+        conversion.imbue(std::locale::classic());
+        conversion >> result;
+        if (conversion.fail() || !std::isfinite(result)) {
             throw ExpressionError("numeric literal is out of range", offset);
         }
-        if (conversion.ec != std::errc{}
-            || conversion.ptr != text.data() + text.size()) {
+        if (!conversion.eof()) {
             throw ExpressionError("invalid numeric literal", offset);
         }
         return {

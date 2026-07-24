@@ -130,6 +130,7 @@ int main()
         requireError("2(3)", 1, "unexpected token");
         requireError("1e+", 3, "invalid numeric exponent");
         requireError("1e9999", 0, "out of range");
+        requireError("1e-9999", 0, "out of range");
 
         std::cout << "expression parser tests passed\n";
         return EXIT_SUCCESS;
