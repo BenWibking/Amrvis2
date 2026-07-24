@@ -1,4 +1,4 @@
-#include <amrvis/query/SliceQuery.hpp>
+#include <amrexplorer/query/SliceQuery.hpp>
 
 #include <algorithm>
 #include <array>

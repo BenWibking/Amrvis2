@@ -1,6 +1,6 @@
 #pragma once
 
-#include <amrvis/core/Geometry.hpp>
+#include <amrexplorer/core/Geometry.hpp>
 
 #include <QDockWidget>
 #include <QString>

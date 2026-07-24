@@ -1,4 +1,4 @@
-#include <amrvis/render2d/VectorGlyphs.hpp>
+#include <amrexplorer/render2d/VectorGlyphs.hpp>
 
 #include <algorithm>
 #include <cmath>

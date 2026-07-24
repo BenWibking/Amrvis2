@@ -1,8 +1,8 @@
-#include <amrvis/io/FabCatalog.hpp>
-#include <amrvis/io/PlotfileDataset.hpp>
-#include <amrvis/io/StandaloneMetadataReader.hpp>
-#include <amrvis/query/LineQuery.hpp>
-#include <amrvis/query/SliceQuery.hpp>
+#include <amrexplorer/io/FabCatalog.hpp>
+#include <amrexplorer/io/PlotfileDataset.hpp>
+#include <amrexplorer/io/StandaloneMetadataReader.hpp>
+#include <amrexplorer/query/LineQuery.hpp>
+#include <amrexplorer/query/SliceQuery.hpp>
 
 #include <array>
 #include <chrono>
@@ -30,7 +30,7 @@ int main()
     const auto unique =
         std::chrono::steady_clock::now().time_since_epoch().count();
     const auto root = std::filesystem::temp_directory_path()
-        / ("amrvis2-fab-catalog-" + std::to_string(unique));
+        / ("amrexplorer-fab-catalog-" + std::to_string(unique));
     std::filesystem::create_directories(root);
     const auto path = root / "raw_fabs";
 

@@ -13,15 +13,15 @@
 #include "Theme.hpp"
 #include "UserGuideDialog.hpp"
 
-#include <amrvis/io/PlotfileDataset.hpp>
-#include <amrvis/io/FabCatalog.hpp>
-#include <amrvis/io/StandaloneMetadataReader.hpp>
-#include <amrvis/core/Statistics.hpp>
-#include <amrvis/query/LineQuery.hpp>
-#include <amrvis/query/SliceQuery.hpp>
-#include <amrvis/render2d/Contours.hpp>
-#include <amrvis/render2d/Palette.hpp>
-#include <amrvis/render2d/ScalarRenderer.hpp>
+#include <amrexplorer/io/PlotfileDataset.hpp>
+#include <amrexplorer/io/FabCatalog.hpp>
+#include <amrexplorer/io/StandaloneMetadataReader.hpp>
+#include <amrexplorer/core/Statistics.hpp>
+#include <amrexplorer/query/LineQuery.hpp>
+#include <amrexplorer/query/SliceQuery.hpp>
+#include <amrexplorer/render2d/Contours.hpp>
+#include <amrexplorer/render2d/Palette.hpp>
+#include <amrexplorer/render2d/ScalarRenderer.hpp>
 
 #include <QAction>
 #include <QActionGroup>
@@ -103,8 +103,8 @@
 
 // Fed from the project version through a CMake compile definition; the
 // fallback covers builds that do not set it (e.g. some IDE integrations).
-#ifndef AMRVIS_VERSION
-#define AMRVIS_VERSION "0.1.0-dev"
+#ifndef AMREXPLORER_VERSION
+#define AMREXPLORER_VERSION "0.1.0-dev"
 #endif
 
 namespace amrvis::qt {
@@ -194,7 +194,7 @@ private:
 
 QSettings makeSettings()
 {
-    return QSettings(QStringLiteral("Amrvis2"), QStringLiteral("Amrvis2"));
+    return QSettings(QStringLiteral("amrex-codes"), QStringLiteral("amrexplorer"));
 }
 
 // An AMReX plotfile directory holds a Header file plus one Level_N
@@ -981,14 +981,14 @@ InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
             if (selectedLevel.composition != CompositionPolicy::FinestAvailable) {
                 throw std::runtime_error(QObject::tr(
                     "The selected slice level cannot fit in the %1 cache. "
-                    "Choose a lower level or increase AMRVIS_CACHE_SIZE_MB.")
+                    "Choose a lower level or increase AMREXPLORER_CACHE_SIZE_MB.")
                         .arg(cacheBudgetDescription(cacheBudget))
                         .toStdString());
             }
             if (attemptMaximumLevel == 0) {
                 throw std::runtime_error(QObject::tr(
                     "The slice cannot fit in the %1 cache, even at level 0. "
-                    "Try a smaller plotfile or increase AMRVIS_CACHE_SIZE_MB.")
+                    "Try a smaller plotfile or increase AMREXPLORER_CACHE_SIZE_MB.")
                         .arg(cacheBudgetDescription(cacheBudget))
                         .toStdString());
             }
@@ -1006,7 +1006,7 @@ InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
-    setWindowTitle(tr("Amrvis2"));
+    setWindowTitle(tr("AMReXplorer"));
     resize(960, 720);
 
     // The plot area is a stacked widget: page 0 holds the single 2-D view,
@@ -1603,7 +1603,7 @@ void MainWindow::createMenus()
     auto* referenceAction = new QAction(tr("&Keyboard && Mouse..."), this);
     connect(referenceAction, &QAction::triggered,
         this, [this] { showKeyboardMouseReference(); });
-    auto* aboutAction = new QAction(tr("&About Amrvis2..."), this);
+    auto* aboutAction = new QAction(tr("&About AMReXplorer..."), this);
     connect(aboutAction, &QAction::triggered, this, [this] { showAboutDialog(); });
     helpMenu->addAction(guideAction);
     helpMenu->addAction(referenceAction);
@@ -2562,12 +2562,12 @@ void MainWindow::showUserGuide()
 
 void MainWindow::showAboutDialog()
 {
-    QMessageBox::about(this, tr("About Amrvis2"),
-        tr("<h3>Amrvis2</h3>"
+    QMessageBox::about(this, tr("About AMReXplorer"),
+        tr("<h3>AMReXplorer</h3>"
            "<p>Demand-driven AMR visualization.</p>"
            "<p>Version %1</p>"
            "<p>A C++20 / Qt 6 application for inspecting AMReX plotfiles.</p>")
-            .arg(QStringLiteral(AMRVIS_VERSION)));
+            .arg(QStringLiteral(AMREXPLORER_VERSION)));
 }
 
 void MainWindow::fitView(PlaneViewState& state)
@@ -3260,7 +3260,7 @@ void MainWindow::saveSettings()
 void MainWindow::updateWindowTitle()
 {
     if (!m_openMetadata) {
-        setWindowTitle(tr("Amrvis2"));
+        setWindowTitle(tr("AMReXplorer"));
         return;
     }
     const auto& metadata = *m_openMetadata;
@@ -3269,12 +3269,12 @@ void MainWindow::updateWindowTitle()
         name = QString::fromStdString(m_datasetPath.string());
     }
     if (m_fabMode) {
-        setWindowTitle(tr("Amrvis2 — %1 — FAB  T = %2")
+        setWindowTitle(tr("AMReXplorer — %1 — FAB  T = %2")
             .arg(name)
             .arg(metadata.time, 0, 'g', 12));
     } else {
         setWindowTitle(
-            tr("Amrvis2 — %1  T = %2  Levels: 0..%3  Finest Level: %3")
+            tr("AMReXplorer — %1  T = %2  Levels: 0..%3  Finest Level: %3")
                 .arg(name)
                 .arg(metadata.time, 0, 'g', 12)
                 .arg(metadata.finestLevel));
@@ -4090,7 +4090,7 @@ void MainWindow::openDatasetImpl(const std::filesystem::path& path,
     m_vectorUField = -1;
     m_vectorVField = -1;
     m_vectorWField = -1;
-    setWindowTitle(tr("Amrvis2"));
+    setWindowTitle(tr("AMReXplorer"));
     {
         auto settings = makeSettings();
         settings.setValue(QStringLiteral("lastOpenDirectory"),

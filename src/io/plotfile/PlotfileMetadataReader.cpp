@@ -1,5 +1,5 @@
-#include <amrvis/io/PlotfileMetadataReader.hpp>
-#include <amrvis/io/detail/VisMfIndex.hpp>
+#include <amrexplorer/io/PlotfileMetadataReader.hpp>
+#include <amrexplorer/io/detail/VisMfIndex.hpp>
 
 #include <algorithm>
 #include <cmath>

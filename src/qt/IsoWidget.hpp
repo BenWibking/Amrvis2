@@ -1,6 +1,6 @@
 #pragma once
 
-#include <amrvis/core/Metadata.hpp>
+#include <amrexplorer/core/Metadata.hpp>
 
 #include <QColor>
 #include <QPoint>

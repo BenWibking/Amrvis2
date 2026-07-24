@@ -1,4 +1,4 @@
-#include <amrvis/expression/Expression.hpp>
+#include <amrexplorer/expression/Expression.hpp>
 
 #include <algorithm>
 #include <array>

@@ -1,6 +1,6 @@
-#include <amrvis/core/Metadata.hpp>
-#include <amrvis/core/Request.hpp>
-#include <amrvis/core/Statistics.hpp>
+#include <amrexplorer/core/Metadata.hpp>
+#include <amrexplorer/core/Request.hpp>
+#include <amrexplorer/core/Statistics.hpp>
 
 #include <cstdlib>
 #include <cmath>

@@ -4,14 +4,14 @@
 #include "NumberFormat.hpp"
 #include "SetContoursDialog.hpp"
 
-#include <amrvis/core/Result.hpp>
-#include <amrvis/core/StopToken.hpp>
-#include <amrvis/io/PlotfileMetadataReader.hpp>
-#include <amrvis/query/SliceQuery.hpp>
-#include <amrvis/render2d/Contours.hpp>
-#include <amrvis/render2d/ImageBuffer.hpp>
-#include <amrvis/render2d/Palette.hpp>
-#include <amrvis/render2d/VectorGlyphs.hpp>
+#include <amrexplorer/core/Result.hpp>
+#include <amrexplorer/core/StopToken.hpp>
+#include <amrexplorer/io/PlotfileMetadataReader.hpp>
+#include <amrexplorer/query/SliceQuery.hpp>
+#include <amrexplorer/render2d/Contours.hpp>
+#include <amrexplorer/render2d/ImageBuffer.hpp>
+#include <amrexplorer/render2d/Palette.hpp>
+#include <amrexplorer/render2d/VectorGlyphs.hpp>
 
 #include <QElapsedTimer>
 #include <QImage>

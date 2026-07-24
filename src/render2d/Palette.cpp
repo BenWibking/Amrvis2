@@ -1,4 +1,4 @@
-#include <amrvis/render2d/Palette.hpp>
+#include <amrexplorer/render2d/Palette.hpp>
 
 #include <algorithm>
 #include <cstddef>

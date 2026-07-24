@@ -1,5 +1,5 @@
-#include <amrvis/core/Geometry.hpp>
-#include <amrvis/core/Metadata.hpp>
+#include <amrexplorer/core/Geometry.hpp>
+#include <amrexplorer/core/Metadata.hpp>
 
 #include <cmath>
 #include <cstdlib>

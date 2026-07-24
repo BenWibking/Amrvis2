@@ -1,25 +1,25 @@
-# Amrvis2 User Guide
+# AMReXplorer User Guide
 
-Amrvis2 is an interactive viewer for two- and three-dimensional AMReX
+AMReXplorer is an interactive viewer for two- and three-dimensional AMReX
 plotfiles. It also opens standalone FAB and MultiFab data. This guide assumes
 you are already familiar with AMReX plotfiles, variables, and refinement
 levels.
 
 For installation and build instructions, see
-[INSTALL.md](https://github.com/WeiqunZhang/Amrvis2/blob/main/INSTALL.md).
+[INSTALL.md](https://github.com/amrex-codes/amrexplorer/blob/main/INSTALL.md).
 
 ## Getting started
 
 Open a dataset from the command line:
 
 ```text
-amrvis2 /path/to/plotfile
+amrexplorer /path/to/plotfile
 ```
 
 Pass two or more plotfile directories to open them as a time sequence:
 
 ```text
-amrvis2 plt00000 plt00010 plt00020
+amrexplorer plt00000 plt00010 plt00020
 ```
 
 You can also start without a path and use the File menu:
@@ -35,12 +35,12 @@ You can also start without a path and use the File menu:
 - **Open New Window** creates an independent viewer for side-by-side
   comparison.
 
-Amrvis2 displays 2-D and 3-D data whose FAB payloads use IEEE 32-bit or IEEE
+AMReXplorer displays 2-D and 3-D data whose FAB payloads use IEEE 32-bit or IEEE
 64-bit floating-point storage.
 
 ## User interface overview
 
-![Amrvis2 displaying a three-dimensional plotfile](images/user-guide-overview.png)
+![AMReXplorer displaying a three-dimensional plotfile](images/user-guide-overview.png)
 
 The main controls are:
 
@@ -188,7 +188,7 @@ Useful shortcuts are:
 | Ctrl+1 through Ctrl+9 | Composite levels 0 through N |
 | Alt+0 through Alt+9 | Exact level N |
 
-If the finest composite cannot fit in the data cache, Amrvis2 reports the
+If the finest composite cannot fit in the data cache, AMReXplorer reports the
 condition and retries with a lower maximum level.
 
 ## Ranges, logarithms, and palettes
@@ -203,13 +203,13 @@ scale:
 - **User** enables explicit minimum and maximum values.
 
 If the input does not provide complete range statistics, **File** and
-**Level** are unavailable and Amrvis2 uses **Visible** instead.
+**Level** are unavailable and AMReXplorer uses **Visible** instead.
 
 Range settings are remembered separately for each field while the dataset is
 open. In 3-D, all three slice panels share one range.
 
 Enable **Log** for logarithmic color mapping. The displayed range must have a
-positive minimum. If it does not, Amrvis2 falls back to linear mapping and
+positive minimum. If it does not, AMReXplorer falls back to linear mapping and
 turns **Log** off; use a positive user minimum when necessary.
 
 Built-in palettes include rainbow, turbo, viridis, plasma, parula, coolwarm,
@@ -228,7 +228,7 @@ Choose **View > Contours...** to select one of three display modes:
 
 For contours, choose the number of lines and their color. For vectors, select
 the U and V components for 2-D data, and the U, V, and W components for 3-D
-data. Amrvis2 may propose fields based on common velocity names; verify the
+data. AMReXplorer may propose fields based on common velocity names; verify the
 component selections for your dataset.
 
 ## Plotfile sequences and animation
@@ -253,7 +253,7 @@ separate `_xy`, `_xz`, and `_yz` images. The exported images include the
 current zoom and visible overlays.
 
 For an open plotfile sequence, **File > Export Animation...** writes numbered
-PNG frames. If `ffmpeg` is installed and available on `PATH`, Amrvis2 also
+PNG frames. If `ffmpeg` is installed and available on `PATH`, AMReXplorer also
 encodes an MP4. Three-dimensional sequences produce separate output for each
 orthogonal plane.
 
@@ -273,11 +273,11 @@ Window geometry, logarithmic mapping, palette, number format, and animation
 speed persist across sessions.
 
 Each open dataset has a 1 GiB data cache by default. Set
-`AMRVIS_CACHE_SIZE_MB` to a positive number of MiB before launching to change
+`AMREXPLORER_CACHE_SIZE_MB` to a positive number of MiB before launching to change
 the initial budget:
 
 ```text
-AMRVIS_CACHE_SIZE_MB=2048 amrvis2 /path/to/plotfile
+AMREXPLORER_CACHE_SIZE_MB=2048 amrexplorer /path/to/plotfile
 ```
 
 Independent windows have independent datasets, caches, and view state.
@@ -303,16 +303,16 @@ Mouse...**.
 valid AMReX `Header` and its `Level_N` directories. For a sequence, every
 selected path must be a plotfile.
 
-**An initial slice reports an unsupported data format.** Amrvis2 supports
+**An initial slice reports an unsupported data format.** AMReXplorer supports
 IEEE-32 and IEEE-64 FAB floating-point payloads. Integer FAB payloads and other
 floating-point layouts are not supported.
 
 **The finest level cannot be displayed.** The composite may exceed the cache
-budget. Increase `AMRVIS_CACHE_SIZE_MB`, reduce the visible region, or select a
+budget. Increase `AMREXPLORER_CACHE_SIZE_MB`, reduce the visible region, or select a
 lower composite maximum level.
 
 **Log turns itself off.** The selected range has a nonpositive minimum, so
-Amrvis2 has fallen back to linear mapping. Select a user range with a positive
+AMReXplorer has fallen back to linear mapping. Select a user range with a positive
 minimum and verify that the field contains positive values.
 
 **MP4 export is skipped.** Install `ffmpeg` and make sure the executable is on

@@ -3,12 +3,12 @@
 // Raw per-level cell-value extraction behind the dataset (spreadsheet)
 // window. Kept free of Qt types so it can be exercised without the GUI.
 
-#include <amrvis/core/Geometry.hpp>
-#include <amrvis/core/Metadata.hpp>
-#include <amrvis/core/Request.hpp>
-#include <amrvis/core/StopToken.hpp>
-#include <amrvis/io/PlotfileBlockReader.hpp>
-#include <amrvis/io/PlotfileDataset.hpp>
+#include <amrexplorer/core/Geometry.hpp>
+#include <amrexplorer/core/Metadata.hpp>
+#include <amrexplorer/core/Request.hpp>
+#include <amrexplorer/core/StopToken.hpp>
+#include <amrexplorer/io/PlotfileBlockReader.hpp>
+#include <amrexplorer/io/PlotfileDataset.hpp>
 
 #include <algorithm>
 #include <array>

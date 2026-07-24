@@ -41,8 +41,8 @@ namespace {
 // the bundled (qrc) icons, with Exec pointing at this running binary's path,
 // which makes the dock work wherever the executable is copied. Idempotent: it
 // only writes when the entry is missing or the binary moved. User-local
-// (~/.local/share); delete ~/.local/share/applications/amrvis2.desktop and the
-// amrvis2.png files under ~/.local/share/icons/hicolor to undo. The standalone
+// (~/.local/share); delete ~/.local/share/applications/amrexplorer.desktop and the
+// amrexplorer.png files under ~/.local/share/icons/hicolor to undo. The standalone
 // resources/install-desktop-entry.sh does the same thing by hand.
 void ensureDesktopEntry()
 {
@@ -52,14 +52,14 @@ void ensureDesktopEntry()
     if (dataDir.isEmpty()) {
         return;
     }
-    const QString desktopPath = dataDir + "/applications/amrvis2.desktop";
+    const QString desktopPath = dataDir + "/applications/amrexplorer.desktop";
     const QString execPath = QCoreApplication::applicationFilePath();
 
     const auto iconInstalled = [&]() {
         for (int size : kSizes) {
             const QString path = QDir(
                 dataDir + QString("/icons/hicolor/%1x%1/apps").arg(size))
-                .filePath("amrvis2.png");
+                .filePath("amrexplorer.png");
             if (!QFileInfo::exists(path)) {
                 return false;
             }
@@ -80,8 +80,8 @@ void ensureDesktopEntry()
     for (int size : kSizes) {
         const QString dir = dataDir + QString("/icons/hicolor/%1x%1/apps").arg(size);
         QDir().mkpath(dir);
-        QFile in(QStringLiteral(":/amrvis2-%1.png").arg(size));
-        QFile out(QDir(dir).filePath("amrvis2.png"));
+        QFile in(QStringLiteral(":/amrexplorer-%1.png").arg(size));
+        QFile out(QDir(dir).filePath("amrexplorer.png"));
         if (in.open(QIODevice::ReadOnly)
             && out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
             out.write(in.readAll());
@@ -93,12 +93,12 @@ void ensureDesktopEntry()
         QTextStream out(&desktop);
         out << "[Desktop Entry]\n"
             << "Type=Application\n"
-            << "Name=Amrvis2\n"
+            << "Name=AMReXplorer\n"
             << "GenericName=AMR Visualization\n"
             << "Comment=Demand-driven AMR visualization\n"
             << "Exec=\"" << execPath << "\" %F\n"
-            << "Icon=amrvis2\n"
-            << "StartupWMClass=amrvis2\n"
+            << "Icon=amrexplorer\n"
+            << "StartupWMClass=amrexplorer\n"
             << "Terminal=false\n"
             << "Categories=Science;DataVisualization;\n";
     }
@@ -544,21 +544,21 @@ int main(int argc, char* argv[])
     QLoggingCategory::setFilterRules(QStringLiteral("qt.qpa.wayland.textinput=false"));
 
     QApplication application(argc, argv);
-    // Advertise the desktop entry name and WM class as "amrvis2" so Linux
-    // docks/taskbars can match the running window to amrvis2.desktop and
+    // Advertise the desktop entry name and WM class as "amrexplorer" so Linux
+    // docks/taskbars can match the running window to amrexplorer.desktop and
     // resolve its icon from the icon theme (setWindowIcon alone only sets the
-    // title-bar icon). QSettings keeps its own hardcoded "Amrvis2" names, so
-    // saved preferences are unaffected.
-    application.setApplicationName(QStringLiteral("amrvis2"));
-    // QGuiApplication::setDesktopFileName(QStringLiteral("amrvis2"));
+    // title-bar icon).
+    application.setApplicationName(QStringLiteral("amrexplorer"));
+    application.setApplicationDisplayName(QStringLiteral("AMReXplorer"));
+    QGuiApplication::setDesktopFileName(QStringLiteral("amrexplorer"));
     // Bundle the logo (rounded-square heatmap) at several sizes so it stays
     // crisp from the 16 px title bar up to the 256 px taskbar/dock.
     QIcon icon;
-    icon.addFile(QStringLiteral(":/amrvis2-16.png"));
-    icon.addFile(QStringLiteral(":/amrvis2-32.png"));
-    icon.addFile(QStringLiteral(":/amrvis2-64.png"));
-    icon.addFile(QStringLiteral(":/amrvis2-128.png"));
-    icon.addFile(QStringLiteral(":/amrvis2-256.png"));
+    icon.addFile(QStringLiteral(":/amrexplorer-16.png"));
+    icon.addFile(QStringLiteral(":/amrexplorer-32.png"));
+    icon.addFile(QStringLiteral(":/amrexplorer-64.png"));
+    icon.addFile(QStringLiteral(":/amrexplorer-128.png"));
+    icon.addFile(QStringLiteral(":/amrexplorer-256.png"));
     application.setWindowIcon(icon);
     ensureDesktopEntry();
     amrvis::qt::MainWindow window;

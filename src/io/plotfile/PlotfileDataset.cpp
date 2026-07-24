@@ -1,7 +1,7 @@
-#include <amrvis/io/PlotfileDataset.hpp>
-#include <amrvis/io/StandaloneMetadataReader.hpp>
+#include <amrexplorer/io/PlotfileDataset.hpp>
+#include <amrexplorer/io/StandaloneMetadataReader.hpp>
 
-#include <amrvis/expression/Expression.hpp>
+#include <amrexplorer/expression/Expression.hpp>
 
 #include <algorithm>
 #include <cstddef>

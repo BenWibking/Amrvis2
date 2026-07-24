@@ -1,4 +1,4 @@
-#include <amrvis/render2d/ScalarRenderer.hpp>
+#include <amrexplorer/render2d/ScalarRenderer.hpp>
 
 #include <cstdlib>
 #include <iostream>

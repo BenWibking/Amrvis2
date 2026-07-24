@@ -1,10 +1,14 @@
-# Amrvis2
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="logo/amrexplorer-lockup-dark@2x.png">
+  <source media="(prefers-color-scheme: light)" srcset="logo/amrexplorer-lockup@2x.png">
+  <img alt="AMReXplorer" src="logo/amrexplorer-lockup@2x.png" width="740">
+</picture>
 
-Amrvis2 is a C++20 and Qt 6 desktop application for interactive visualization
+AMReXplorer is a C++20 and Qt 6 desktop application for interactive visualization
 of AMReX data. One executable opens 2-D and 3-D plotfiles as well as standalone
 FAB and MultiFab data.
 
-![Amrvis2 displaying a three-dimensional plotfile](docs/images/user-guide-overview.png)
+![AMReXplorer displaying a three-dimensional plotfile](docs/images/user-guide-overview.png)
 
 ## Highlights
 
