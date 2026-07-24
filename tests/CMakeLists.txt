@@ -6,9 +6,24 @@ add_executable(test_geometry unit/test_geometry.cpp)
 target_link_libraries(test_geometry PRIVATE Amrvis::core Amrvis::warnings)
 add_test(NAME geometry COMMAND test_geometry)
 
+add_executable(test_stop_token unit/test_stop_token.cpp)
+target_compile_definitions(
+    test_stop_token PRIVATE AMRVIS_TEST_FORCE_FALLBACK_STOP_TOKEN
+)
+target_link_libraries(test_stop_token PRIVATE Amrvis::core Amrvis::warnings)
+add_test(NAME stop_token_fallback COMMAND test_stop_token)
+
 add_executable(test_byte_lru_cache unit/test_byte_lru_cache.cpp)
 target_link_libraries(test_byte_lru_cache PRIVATE Amrvis::cache Amrvis::warnings)
 add_test(NAME byte_lru_cache COMMAND test_byte_lru_cache)
+
+add_executable(test_cache_config unit/test_cache_config.cpp)
+target_include_directories(test_cache_config PRIVATE "${CMAKE_SOURCE_DIR}/src/qt")
+target_link_libraries(test_cache_config PRIVATE Amrvis::warnings)
+add_test(NAME cache_config COMMAND test_cache_config)
+set_tests_properties(cache_config PROPERTIES
+    ENVIRONMENT "AMRVIS_CACHE_SIZE_MB=768"
+)
 
 add_executable(test_scalar_renderer unit/test_scalar_renderer.cpp)
 target_link_libraries(test_scalar_renderer PRIVATE Amrvis::render2d Amrvis::warnings)
@@ -47,12 +62,28 @@ add_executable(test_selective_block_read integration/test_selective_block_read.c
 target_link_libraries(test_selective_block_read PRIVATE Amrvis::io Amrvis::warnings)
 add_test(NAME selective_block_read COMMAND test_selective_block_read)
 
+add_executable(
+    test_single_precision_plotfile
+    integration/test_single_precision_plotfile.cpp
+)
+target_link_libraries(
+    test_single_precision_plotfile
+    PRIVATE Amrvis::query Amrvis::warnings
+)
+add_test(NAME single_precision_plotfile COMMAND test_single_precision_plotfile)
+
 add_executable(test_slice_query integration/test_slice_query.cpp)
 target_link_libraries(test_slice_query PRIVATE Amrvis::query Amrvis::warnings)
 add_test(NAME slice_query COMMAND test_slice_query)
 
 add_executable(test_line_query integration/test_line_query.cpp)
-target_link_libraries(test_line_query PRIVATE Amrvis::query Amrvis::warnings)
+target_link_libraries(
+    test_line_query
+    PRIVATE
+        Amrvis::query
+        Amrvis::warnings
+        Threads::Threads
+)
 add_test(
     NAME line_query
     COMMAND test_line_query
@@ -66,6 +97,41 @@ add_executable(fixture_materializer fixture_materializer/main.cpp)
 target_link_libraries(fixture_materializer PRIVATE Amrvis::warnings)
 
 if(TARGET amrvis_qt)
+    add_executable(test_user_guide_dialog
+        unit/test_user_guide_dialog.cpp
+        "${PROJECT_SOURCE_DIR}/src/qt/UserGuideDialog.cpp"
+        "${PROJECT_SOURCE_DIR}/resources/user-guide.qrc"
+    )
+    set_target_properties(test_user_guide_dialog PROPERTIES AUTORCC ON)
+    target_include_directories(test_user_guide_dialog
+        PRIVATE "${PROJECT_SOURCE_DIR}/src/qt"
+    )
+    target_link_libraries(test_user_guide_dialog
+        PRIVATE Amrvis::warnings Qt6::Widgets
+    )
+    add_test(
+        NAME user_guide_dialog
+        COMMAND "${CMAKE_COMMAND}" -E env QT_QPA_PLATFORM=offscreen
+            "$<TARGET_FILE:test_user_guide_dialog>"
+    )
+
+    add_executable(test_scientific_double_spin_box
+        unit/test_scientific_double_spin_box.cpp
+        "${PROJECT_SOURCE_DIR}/src/qt/NumberFormat.cpp"
+        "${PROJECT_SOURCE_DIR}/src/qt/ScientificDoubleSpinBox.cpp"
+    )
+    target_include_directories(test_scientific_double_spin_box
+        PRIVATE "${PROJECT_SOURCE_DIR}/src/qt"
+    )
+    target_link_libraries(test_scientific_double_spin_box
+        PRIVATE Amrvis::warnings Qt6::Widgets
+    )
+    add_test(
+        NAME scientific_double_spin_box
+        COMMAND "${CMAKE_COMMAND}" -E env QT_QPA_PLATFORM=offscreen
+            "$<TARGET_FILE:test_scientific_double_spin_box>"
+    )
+
     add_test(
         NAME qt_metadata_smoke
         COMMAND "${CMAKE_COMMAND}" -E env QT_QPA_PLATFORM=offscreen
@@ -104,6 +170,17 @@ if(TARGET amrvis_qt)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/qt_smoke_driver.cmake"
     )
     set_tests_properties(qt_slice_smoke_3d PROPERTIES TIMEOUT 30)
+    add_test(
+        NAME qt_multifab_missing_range
+        COMMAND "${CMAKE_COMMAND}"
+            "-DMATERIALIZER=$<TARGET_FILE:fixture_materializer>"
+            "-DAMRVIS_QT=$<TARGET_FILE:amrvis_qt>"
+            "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/data/plotfile_2d"
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/fixtures_missing_range"
+            -DMODE=missing-range
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/qt_smoke_driver.cmake"
+    )
+    set_tests_properties(qt_multifab_missing_range PROPERTIES TIMEOUT 30)
     add_test(
         NAME qt_sequence_smoke
         COMMAND "${CMAKE_COMMAND}"

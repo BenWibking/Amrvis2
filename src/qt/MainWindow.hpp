@@ -5,6 +5,7 @@
 #include "SetContoursDialog.hpp"
 
 #include <amrvis/core/Result.hpp>
+#include <amrvis/core/StopToken.hpp>
 #include <amrvis/io/PlotfileMetadataReader.hpp>
 #include <amrvis/query/SliceQuery.hpp>
 #include <amrvis/render2d/Contours.hpp>
@@ -22,7 +23,6 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
-#include <stop_token>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -35,7 +35,6 @@ class QCloseEvent;
 class QColor;
 class QComboBox;
 class QDockWidget;
-class QDoubleSpinBox;
 class QLabel;
 class QSpinBox;
 class QLineF;
@@ -64,6 +63,8 @@ class DatasetWindow;
 class ImageView;
 class IsoWidget;
 class LinePlotWindow;
+class ScientificDoubleSpinBox;
+class UserGuideDialog;
 
 enum class RangeMode {
     Visible,
@@ -108,6 +109,10 @@ struct InitialSliceResult {
     // First line of the plotfile Header when the path is a plotfile
     // directory; empty for standalone datasets.
     std::string fileVersion;
+    // Set when a Finest Available load exceeded the cache budget and was
+    // retried with a lower composite maximum level.
+    int cacheFallbackFromLevel = -1;
+    int cacheFallbackToLevel = -1;
 };
 
 // Everything needed to render one frame's slice(s) off the GUI thread. The
@@ -119,7 +124,7 @@ struct FrameSliceSpec {
     DisplayMode displayMode = DisplayMode::Raster;
     std::uint32_t field = 0;
     int levelSelection = -1;  // level combo data: -1 = finest available
-    RangeMode rangeMode = RangeMode::Visible;
+    RangeMode rangeMode = RangeMode::File;
     std::optional<std::pair<double, double>> userRange;
     bool logarithmic = false;
     Palette palette;
@@ -195,7 +200,7 @@ private:
         std::uint32_t cachedVectorUField = 0;
         std::uint32_t cachedVectorVField = 0;
         int cachedContourCount = 0;
-        std::stop_source stopSource;
+        StopSource stopSource;
         std::uint64_t sliceGeneration = 0;
         // Slice requests currently on a worker for this view; the sweep
         // playback skips ticks while one is in flight.
@@ -248,6 +253,7 @@ private:
     void commitFieldRange(std::uint32_t field);
     void applyFieldRange(std::uint32_t field);
     void resetRangeState();
+    void updateRangeModeAvailability();
     void showContoursDialog();
     void applyContourSettings(DisplayMode mode, int count, int uField, int vField,
         int wField, int contourColor);
@@ -260,6 +266,7 @@ private:
     void refreshDatasetWindow();
     void datasetCellActivated(const RealBox& physicalCell);
     [[nodiscard]] std::optional<DatasetRequest> buildDatasetRequest() const;
+    void showUserGuide();
     void showKeyboardMouseReference();
     void showAboutDialog();
     void showMetadata(const PlotfileMetadataResult& result, const std::filesystem::path& path);
@@ -369,17 +376,18 @@ private:
     LinePlotWindow* m_linePlotWindow = nullptr;
     // Cancels in-flight line-plot queries on dataset switch or window close so
     // a late result neither reopens a closed window nor wastes I/O.
-    std::stop_source m_linePlotStopSource;
+    StopSource m_linePlotStopSource;
     DatasetWindow* m_datasetWindow = nullptr;
     SetContoursDialog* m_contoursDialog = nullptr;
     QDialog* m_numberFormatDialog = nullptr;
+    UserGuideDialog* m_userGuideDialog = nullptr;
     QComboBox* m_fieldSelector = nullptr;
     QComboBox* m_levelSelector = nullptr;
     QComboBox* m_rangeMode = nullptr;
     QComboBox* m_paletteSelector = nullptr;
     QCheckBox* m_logarithmic = nullptr;
-    QDoubleSpinBox* m_rangeMinimum = nullptr;
-    QDoubleSpinBox* m_rangeMaximum = nullptr;
+    ScientificDoubleSpinBox* m_rangeMinimum = nullptr;
+    ScientificDoubleSpinBox* m_rangeMaximum = nullptr;
     // Per-field range state for the current dataset. m_trackedField is the
     // field the range widgets currently represent; the field selector swaps
     // snapshots through this map when the user changes fields.
@@ -456,7 +464,7 @@ private:
     std::vector<PlaneViewState*> m_pendingViews;
     // OR of the rasterDirty flags of the coalesced pending requests.
     bool m_pendingRasterDirty = false;
-    std::stop_source m_initialStopSource;
+    StopSource m_initialStopSource;
     DisplayMode m_displayMode = DisplayMode::Raster;
     int m_contourCount = 15;
     int m_contourColor = contourColorBlack;
@@ -498,7 +506,7 @@ private:
     // prefetch watcher knows to drop its result.
     std::uint64_t m_prefetchGeneration = 0;
     std::uint64_t m_sequenceDatasetCounter = 0;
-    std::stop_source m_prefetchStopSource;
+    StopSource m_prefetchStopSource;
     std::optional<PrefetchedFrame> m_prefetched;
     QElapsedTimer m_frameTimer;
     qint64 m_lastFrameSwitchMs = 0;

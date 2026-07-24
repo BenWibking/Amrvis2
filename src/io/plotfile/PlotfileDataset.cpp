@@ -18,7 +18,7 @@ std::mutex& globalAmrexIoMutex()
 std::uint64_t residentBytes(const FabBlock& block)
 {
     return static_cast<std::uint64_t>(sizeof(FabBlock))
-        + static_cast<std::uint64_t>(block.values.capacity()) * sizeof(double);
+        + block.values.residentBytes();
 }
 
 std::filesystem::path dataRoot(const std::filesystem::path& path)
@@ -62,7 +62,7 @@ DatasetId PlotfileDataset::id() const noexcept
 }
 
 PlotfileDataset::BlockAccess PlotfileDataset::requestBlock(
-    const BlockRequest& request, std::stop_token cancellation)
+    const BlockRequest& request, StopToken cancellation)
 {
     if (request.dataset != m_id) {
         throw BlockReadError("block request targets a different dataset");

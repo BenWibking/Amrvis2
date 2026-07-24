@@ -1,6 +1,7 @@
 add_executable(amrvis_qt
     AnimationPanel.cpp
     AnimationPanel.hpp
+    CacheConfig.hpp
     ColorBarWidget.cpp
     ColorBarWidget.hpp
     DatasetExtract.hpp
@@ -17,11 +18,16 @@ add_executable(amrvis_qt
     MainWindow.hpp
     NumberFormat.cpp
     NumberFormat.hpp
+    ScientificDoubleSpinBox.cpp
+    ScientificDoubleSpinBox.hpp
     SetContoursDialog.cpp
     SetContoursDialog.hpp
     Theme.hpp
+    UserGuideDialog.cpp
+    UserGuideDialog.hpp
     main.cpp
     ${CMAKE_SOURCE_DIR}/resources/amrvis2.qrc
+    ${CMAKE_SOURCE_DIR}/resources/user-guide.qrc
 )
 set_target_properties(amrvis_qt PROPERTIES OUTPUT_NAME amrvis2 AUTOMOC ON AUTORCC ON)
 
