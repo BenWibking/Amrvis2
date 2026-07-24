@@ -105,6 +105,8 @@ struct SliceDisplayResult {
 
 struct InitialSliceResult {
     std::shared_ptr<PlotfileDataset> dataset;
+    // Definitions successfully installed in dataset, in dependency order.
+    std::vector<std::pair<std::string, std::string>> derivedFields;
     // One entry per displayed view, ordered by normal axis (2-D: one entry).
     std::vector<SliceDisplayResult> displays;
     // First line of the plotfile Header when the path is a plotfile

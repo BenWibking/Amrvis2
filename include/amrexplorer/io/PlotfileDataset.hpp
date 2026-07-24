@@ -35,6 +35,7 @@ public:
         std::uint64_t cacheBudgetBytes, PlotfileMetadataResult metadata);
 
     [[nodiscard]] const DatasetMetadata& metadata() const noexcept;
+    [[nodiscard]] const PlotfileMetadataResult& sourceMetadata() const noexcept;
     [[nodiscard]] const MetadataReadMetrics& metadataReadMetrics() const noexcept;
     [[nodiscard]] DatasetId id() const noexcept;
     [[nodiscard]] const std::filesystem::path& dataRoot() const noexcept;

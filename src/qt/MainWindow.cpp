@@ -816,6 +816,7 @@ InitialSliceResult executeFrameLoad(const std::filesystem::path& path,
                 .name = name,
                 .expression = expression
             });
+            result.derivedFields.emplace_back(name, expression);
         } catch (const std::exception& error) {
             result.warnings.push_back(
                 "Skipped derived field '" + name + "': " + error.what());
@@ -2035,7 +2036,8 @@ void MainWindow::showExpressionEditor()
                 : selectedFieldName;
             const auto cacheBudget = m_dataset->cacheMetrics().budgetBytes;
             auto replacement = std::make_shared<PlotfileDataset>(
-                m_datasetPath, m_dataset->id(), cacheBudget);
+                m_dataset->dataRoot(), m_dataset->id(), cacheBudget,
+                m_dataset->sourceMetadata());
             for (const auto& [fieldName, parserExpression] : definitions) {
                 [[maybe_unused]] const auto field =
                     replacement->addDerivedField({
@@ -3466,6 +3468,7 @@ void MainWindow::backToMultiFab()
     m_multifabReturn.reset();
     m_fabMode = false;
     m_fabSelectorDock->setBackAvailable(false);
+    state.spec.derivedFields = m_derivedFields;
     openDatasetImpl(state.path, false, std::move(state.metadata),
         std::move(state.dataRoot), true, std::move(state.spec));
 }
@@ -4219,6 +4222,7 @@ void MainWindow::requestInitialSlice(
                 auto result = watcher->result();
                 if (generation == m_generation) {
                     m_dataset = result.dataset;
+                    m_derivedFields = result.derivedFields;
                     configureSliceControls();
                     if (restoredSpec) {
                         const QSignalBlocker fieldBlocker(m_fieldSelector);

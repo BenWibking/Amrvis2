@@ -313,6 +313,29 @@ int main()
     require(multiFabAccess.handle->values[2] == 30.0,
         "standalone MultiFab selective read value mismatch");
 
+    auto nodalMetadata =
+        std::make_shared<amrvis::DatasetMetadata>(*standaloneFab.metadata);
+    for (auto& field : nodalMetadata->fields) {
+        field.centering = amrvis::Centering::Node;
+    }
+    nodalMetadata->levels.front().domain.centering = {{1, 1, 0}};
+    nodalMetadata->levels.front().boxes.front().centering = {{1, 1, 0}};
+    nodalMetadata->levels.front().blocks.front().box.centering = {{1, 1, 0}};
+    amrvis::PlotfileDataset nodalDataset(
+        root / "Level_0", amrvis::DatasetId{10}, 1024 * 1024,
+        {std::move(nodalMetadata), {}, "FAB"});
+    bool nodalInputRejected = false;
+    try {
+        [[maybe_unused]] const auto ignored = nodalDataset.addDerivedField({
+            .name = "nodal-derived",
+            .expression = "Fab_0 + 1"
+        });
+    } catch (const std::invalid_argument&) {
+        nodalInputRejected = true;
+    }
+    require(nodalInputRejected,
+        "non-cell-centered derived-field input was accepted");
+
     std::filesystem::remove_all(root);
     return 0;
 }

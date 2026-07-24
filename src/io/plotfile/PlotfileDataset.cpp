@@ -234,6 +234,11 @@ const DatasetMetadata& PlotfileDataset::metadata() const noexcept
     return *m_metadata;
 }
 
+const PlotfileMetadataResult& PlotfileDataset::sourceMetadata() const noexcept
+{
+    return m_metadataResult;
+}
+
 const MetadataReadMetrics& PlotfileDataset::metadataReadMetrics() const noexcept
 {
     return m_metadataResult.metrics;
@@ -269,6 +274,17 @@ FieldId PlotfileDataset::addDerivedField(
     if (duplicate != m_metadata->fields.end()) {
         throw std::invalid_argument(
             "field name '" + definition.name + "' is already in use");
+    }
+    const auto nonCellLevel = std::find_if(
+        m_metadata->levels.begin(), m_metadata->levels.end(),
+        [this](const LevelMetadata& level) {
+            return centeringFromIndexType(
+                level.domain.centering, m_metadata->dimension)
+                != Centering::Cell;
+        });
+    if (nonCellLevel != m_metadata->levels.end()) {
+        throw std::invalid_argument(
+            "derived fields require cell-centered dataset levels");
     }
 
     auto derived = std::make_shared<DerivedField>();
@@ -317,6 +333,10 @@ FieldId PlotfileDataset::addDerivedField(
         if (input->componentCount != 1) {
             throw std::invalid_argument(
                 "derived-field inputs must be scalar fields");
+        }
+        if (input->centering != Centering::Cell) {
+            throw std::invalid_argument(
+                "derived-field inputs must be cell-centered");
         }
         const auto index = static_cast<std::size_t>(
             std::distance(m_metadata->fields.begin(), input));

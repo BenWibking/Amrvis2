@@ -348,6 +348,39 @@ bool applyExpressionDefinition(amrvis::qt::MainWindow& window,
     return completed;
 }
 
+bool expressionDefinitionMatches(amrvis::qt::MainWindow& window,
+    const QString& fieldName, const QString& parserExpression)
+{
+    auto* action = window.findChild<QAction*>(
+        QStringLiteral("expressionEditorAction"));
+    if (action == nullptr) {
+        return false;
+    }
+    bool matches = false;
+    QTimer::singleShot(0, &window, [&] {
+        auto* dialog = window.findChild<QDialog*>(
+            QStringLiteral("expressionEditor"));
+        if (dialog == nullptr) {
+            return;
+        }
+        auto* list = dialog->findChild<QListWidget*>(
+            QStringLiteral("expressionList"));
+        auto* name = dialog->findChild<QLineEdit*>(
+            QStringLiteral("expressionName"));
+        auto* source = dialog->findChild<QPlainTextEdit*>(
+            QStringLiteral("expressionSource"));
+        if (list != nullptr && list->count() == 1
+            && name != nullptr && source != nullptr) {
+            list->setCurrentRow(0);
+            matches = name->text() == fieldName
+                && source->toPlainText() == parserExpression;
+        }
+        dialog->reject();
+    });
+    action->trigger();
+    return matches;
+}
+
 bool visibleRangeMatches(
     const amrvis::qt::MainWindow& window, double minimum, double maximum)
 {
@@ -680,19 +713,30 @@ int main(int argc, char* argv[])
                 if (!success || selector == nullptr
                     || selector->entries().size() < 2
                     || !fabSelectorIsAscending(*selector)
-                    || !fabSelectorColumnsMatch(*selector, true)
-                    || !fabSelectorPointFilterMatches(
-                        *selector, phase == 0)) {
+                    || !fabSelectorColumnsMatch(*selector, true)) {
                     application.exit(1);
                     return;
                 }
                 if (phase == 0) {
+                    if (!applyExpressionDefinition(window,
+                            QStringLiteral("scaled"),
+                            QStringLiteral("2*MultiFab_0"))
+                        || !fabSelectorPointFilterMatches(*selector, true)) {
+                        application.exit(1);
+                        return;
+                    }
                     ++phase;
                 } else if (phase == 1) {
                     auto* back = selector->findChild<QPushButton*>(
                         QStringLiteral("fabBackButton"));
                     if (back == nullptr || !back->isVisible()
                         || !fabRangeSelectorMatches(window)
+                        || !expressionDefinitionMatches(window,
+                            QStringLiteral("scaled"),
+                            QStringLiteral("2*MultiFab_0"))
+                        || !applyExpressionDefinition(window,
+                            QStringLiteral("scaled"),
+                            QStringLiteral("3*MultiFab_0"))
                         || !clearFabSelectorPointFilter(*selector)) {
                         application.exit(1);
                         return;
@@ -703,7 +747,11 @@ int main(int argc, char* argv[])
                     const auto* back = selector->findChild<QPushButton*>(
                         QStringLiteral("fabBackButton"));
                     application.exit(
-                        back != nullptr && !back->isVisible() ? 0 : 1);
+                        back != nullptr && !back->isVisible()
+                            && expressionDefinitionMatches(window,
+                                QStringLiteral("scaled"),
+                                QStringLiteral("3*MultiFab_0"))
+                            ? 0 : 1);
                 }
             });
         QTimer::singleShot(0, &window,
