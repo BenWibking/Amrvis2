@@ -1322,6 +1322,7 @@ MainWindow::MainWindow(QWidget* parent)
     // One playback timer drives either animation mode; starting one mode
     // stops the other (see setPlaybackMode).
     m_playbackTimer = new QTimer(this);
+    m_playbackTimer->setObjectName(QStringLiteral("playbackTimer"));
     connect(m_playbackTimer, &QTimer::timeout, this, [this] { playbackTick(); });
     // Animation export advances one frame at a time as each renders.
     connect(this, &MainWindow::sequenceFrameDisplayed,
@@ -1769,6 +1770,18 @@ void MainWindow::showExpressionEditor()
         return;
     }
 
+    // dialog.exec() runs a nested event loop, so playback and debounce timers
+    // would otherwise be able to launch requests after the activity check
+    // above. Freeze those request sources for the modal lifetime; Apply
+    // schedules a fresh slice for the replacement dataset, while Cancel
+    // restores any coalesced work that was pending when the editor opened.
+    const auto pausedPlaybackMode = m_playbackMode;
+    const auto sliceRequestPending = m_sliceDebounce->isActive();
+    const auto panRequestPending = m_panDebounce->isActive();
+    setPlaybackMode(PlaybackMode::None);
+    m_sliceDebounce->stop();
+    m_panDebounce->stop();
+
     QDialog dialog(this);
     dialog.setObjectName(QStringLiteral("expressionEditor"));
     dialog.setWindowTitle(tr("Expression Editor"));
@@ -2159,7 +2172,20 @@ void MainWindow::showExpressionEditor()
         }
     });
 
-    dialog.exec();
+    const auto result = dialog.exec();
+    if (result != QDialog::Accepted && sliceRequestPending) {
+        scheduleSliceRequest();
+    }
+    if (panRequestPending) {
+        flushPanDrag(false);
+    }
+    if (pausedPlaybackMode == PlaybackMode::Sweep && m_dataset
+        && m_dataset->metadata().dimension == 3) {
+        setPlaybackMode(PlaybackMode::Sweep);
+    } else if (pausedPlaybackMode == PlaybackMode::Sequence
+        && m_sequenceFrames.size() >= 2) {
+        setPlaybackMode(PlaybackMode::Sequence);
+    }
 }
 
 void MainWindow::syncPaletteChecks()

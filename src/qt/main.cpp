@@ -1,4 +1,5 @@
 #include "MainWindow.hpp"
+#include "AnimationPanel.hpp"
 #include "FabSelectorDock.hpp"
 
 #include <QAction>
@@ -306,7 +307,8 @@ bool exerciseExpressionEditor(amrvis::qt::MainWindow& window)
 }
 
 bool applyExpressionDefinition(amrvis::qt::MainWindow& window,
-    const QString& fieldName, const QString& parserExpression)
+    const QString& fieldName, const QString& parserExpression,
+    bool expectPlaybackPaused = false)
 {
     auto* action = window.findChild<QAction*>(
         QStringLiteral("expressionEditorAction"));
@@ -330,8 +332,12 @@ bool applyExpressionDefinition(amrvis::qt::MainWindow& window,
             QStringLiteral("expressionSource"));
         auto* apply = dialog->findChild<QPushButton*>(
             QStringLiteral("applyExpressionsButton"));
+        auto* playbackTimer = window.findChild<QTimer*>(
+            QStringLiteral("playbackTimer"));
         if (add == nullptr || list == nullptr || name == nullptr
-            || source == nullptr || apply == nullptr) {
+            || source == nullptr || apply == nullptr
+            || (expectPlaybackPaused
+                && (playbackTimer == nullptr || playbackTimer->isActive()))) {
             dialog->reject();
             return;
         }
@@ -740,9 +746,27 @@ int main(int argc, char* argv[])
         const std::filesystem::path path(argv[2]);
         QObject::connect(&window, &amrvis::qt::MainWindow::initialSliceFinished,
             &application, [&window, &application, state](bool success) {
-                if (!success || !applyExpressionDefinition(window,
+                auto* animationPanel =
+                    window.findChild<amrvis::qt::AnimationPanel*>();
+                auto* playbackTimer = window.findChild<QTimer*>(
+                    QStringLiteral("playbackTimer"));
+                if (!success || animationPanel == nullptr
+                    || playbackTimer == nullptr) {
+                    application.exit(1);
+                    return;
+                }
+                animationPanel->setSpeedValue(600);
+                animationPanel->sweepPlayToggled();
+                if (!playbackTimer->isActive()
+                    || !applyExpressionDefinition(window,
                         QStringLiteral("scaled-q"),
-                        QStringLiteral("2*q"))) {
+                        QStringLiteral("2*q"), true)
+                    || !playbackTimer->isActive()) {
+                    application.exit(1);
+                    return;
+                }
+                animationPanel->sweepPlayToggled();
+                if (playbackTimer->isActive()) {
                     application.exit(1);
                     return;
                 }
