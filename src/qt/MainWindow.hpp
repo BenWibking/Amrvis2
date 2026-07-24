@@ -436,7 +436,11 @@ private:
     };
     std::unordered_map<std::uint32_t, FieldRange> m_fieldRanges;
     std::uint32_t m_trackedField = 0;
+    // Definitions requested for future loads can include entries that the
+    // displayed sequence frame could not install. The editor operates only on
+    // the subset actually present in the current dataset.
     std::vector<std::pair<std::string, std::string>> m_derivedFields;
+    std::vector<std::pair<std::string, std::string>> m_installedDerivedFields;
     QWidget* m_slicePositionControls = nullptr;
     std::array<QSpinBox*, 3> m_sliceSpinboxes{nullptr, nullptr, nullptr};
     QTimer* m_sliceDebounce = nullptr;

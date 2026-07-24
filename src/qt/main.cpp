@@ -13,6 +13,7 @@
 #include <QGuiApplication>
 #include <QIcon>
 #include <QInputDialog>
+#include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QLoggingCategory>
@@ -423,6 +424,58 @@ bool expressionDefinitionMatches(amrvis::qt::MainWindow& window,
     return matches;
 }
 
+bool expressionEditorMatchesInstalledFrame(amrvis::qt::MainWindow& window)
+{
+    auto* action = window.findChild<QAction*>(
+        QStringLiteral("expressionEditorAction"));
+    if (action == nullptr) {
+        return false;
+    }
+    bool matches = false;
+    QTimer::singleShot(0, &window, [&] {
+        auto* dialog = window.findChild<QDialog*>(
+            QStringLiteral("expressionEditor"));
+        if (dialog == nullptr) {
+            return;
+        }
+        const auto* list = dialog->findChild<QListWidget*>(
+            QStringLiteral("expressionList"));
+        const auto* help = dialog->findChild<QLabel*>(
+            QStringLiteral("expressionHelp"));
+        matches = list != nullptr && list->count() == 2
+            && list->item(0)->text() == QStringLiteral("derived-b")
+            && list->item(1)->text() == QStringLiteral("derived-c")
+            && help != nullptr
+            && help->text().contains(QStringLiteral("temperature"));
+        dialog->reject();
+    });
+    action->trigger();
+    return matches;
+}
+
+bool setUserRange(amrvis::qt::MainWindow& window,
+    double minimum, double maximum)
+{
+    auto* mode = window.findChild<QComboBox*>(
+        QStringLiteral("rangeModeSelector"));
+    auto* lower = window.findChild<QDoubleSpinBox*>(
+        QStringLiteral("rangeMinimum"));
+    auto* upper = window.findChild<QDoubleSpinBox*>(
+        QStringLiteral("rangeMaximum"));
+    if (mode == nullptr || lower == nullptr || upper == nullptr) {
+        return false;
+    }
+    const auto userIndex = mode->findData(
+        static_cast<int>(amrvis::qt::RangeMode::User));
+    if (userIndex < 0) {
+        return false;
+    }
+    mode->setCurrentIndex(userIndex);
+    lower->setValue(minimum);
+    upper->setValue(maximum);
+    return true;
+}
+
 bool visibleRangeMatches(
     const amrvis::qt::MainWindow& window, double minimum, double maximum)
 {
@@ -825,13 +878,35 @@ int main(int argc, char* argv[])
                     }
                     fieldSelector->setCurrentIndex(fieldSelector->findText(
                         QStringLiteral("derived-b")));
+                    if (!setUserRange(window, 10.0, 20.0)) {
+                        application.exit(1);
+                        return;
+                    }
+                    fieldSelector->setCurrentIndex(fieldSelector->findText(
+                        QStringLiteral("derived-c")));
+                    if (!setUserRange(window, 30.0, 40.0)) {
+                        application.exit(1);
+                        return;
+                    }
+                    fieldSelector->setCurrentIndex(fieldSelector->findText(
+                        QStringLiteral("derived-b")));
                     window.stepSequence(1);
                 } else if (index == 1) {
-                    const auto* fieldSelector = window.findChild<QComboBox*>(
+                    auto* fieldSelector = window.findChild<QComboBox*>(
                         QStringLiteral("fieldSelector"));
-                    application.exit(fieldSelector != nullptr
-                            && fieldSelector->currentText()
-                                == QStringLiteral("derived-b")
+                    const auto selectedRangeMatches = fieldSelector != nullptr
+                        && fieldSelector->currentText()
+                            == QStringLiteral("derived-b")
+                        && visibleRangeMatches(window, 10.0, 20.0);
+                    if (!selectedRangeMatches) {
+                        application.exit(1);
+                        return;
+                    }
+                    fieldSelector->setCurrentIndex(fieldSelector->findText(
+                        QStringLiteral("derived-c")));
+                    application.exit(
+                        visibleRangeMatches(window, 30.0, 40.0)
+                            && expressionEditorMatchesInstalledFrame(window)
                         ? 0 : 1);
                 }
             });

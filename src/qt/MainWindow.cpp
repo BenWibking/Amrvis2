@@ -1774,7 +1774,7 @@ void MainWindow::showExpressionEditor()
     dialog.setWindowTitle(tr("Expression Editor"));
     dialog.resize(760, 460);
 
-    auto definitions = m_derivedFields;
+    auto definitions = m_installedDerivedFields;
     auto* expressionList = new QListWidget(&dialog);
     expressionList->setObjectName(QStringLiteral("expressionList"));
     expressionList->setMinimumWidth(190);
@@ -1815,10 +1815,9 @@ void MainWindow::showExpressionEditor()
     expression->setMaximumHeight(110);
 
     QStringList variables;
-    const auto& currentFields = m_dataset->metadata().fields;
-    const auto storedFieldCount = currentFields.size() - m_derivedFields.size();
-    for (std::size_t field = 0; field < storedFieldCount; ++field) {
-        variables.push_back(QString::fromStdString(currentFields[field].name));
+    const auto& storedFields = m_dataset->sourceMetadata().metadata->fields;
+    for (const auto& field : storedFields) {
+        variables.push_back(QString::fromStdString(field.name));
     }
     auto* help = new QLabel(
         tr("Operators: + - * / **. Functions: sqrt, pow, exp, log, exp10, "
@@ -1826,6 +1825,7 @@ void MainWindow::showExpressionEditor()
            "Expressions may also reference expressions above them in the list.")
             .arg(variables.join(QStringLiteral(", "))),
         &dialog);
+    help->setObjectName(QStringLiteral("expressionHelp"));
     help->setWordWrap(true);
 
     auto* form = new QFormLayout;
@@ -2077,6 +2077,7 @@ void MainWindow::showExpressionEditor()
 
             m_dataset = std::move(replacement);
             m_derivedFields = definitions;
+            m_installedDerivedFields = definitions;
             m_fieldRanges.clear();
             const auto& metadata = m_dataset->metadata();
             {
@@ -4036,6 +4037,7 @@ void MainWindow::openDatasetImpl(const std::filesystem::path& path,
     closeSequence();
     resetRangeState();
     m_derivedFields.clear();
+    m_installedDerivedFields.clear();
     // Invalidate every in-flight per-view slice and reset the view states.
     const std::array<PlaneViewState*, 4> states{
         &m_view2d, &m_planeViews[0], &m_planeViews[1], &m_planeViews[2]};
@@ -4245,6 +4247,7 @@ void MainWindow::requestInitialSlice(
                 if (generation == m_generation) {
                     m_dataset = result.dataset;
                     m_derivedFields = result.derivedFields;
+                    m_installedDerivedFields = result.derivedFields;
                     m_vectorUField = static_cast<int>(result.vectorUField);
                     m_vectorVField = static_cast<int>(result.vectorVField);
                     m_vectorWField = static_cast<int>(result.vectorWField);
@@ -5093,6 +5096,7 @@ void MainWindow::openSequence(const std::vector<std::filesystem::path>& frames)
     closeSequence();
     resetRangeState();
     m_derivedFields.clear();
+    m_installedDerivedFields.clear();
 
     auto sorted = frames;
     std::sort(sorted.begin(), sorted.end(),
@@ -5287,8 +5291,29 @@ void MainWindow::finishFrameLoad(InitialSliceResult result, bool defaultPosition
 void MainWindow::displayFrameResult(InitialSliceResult& result,
     bool defaultPositions)
 {
+    std::map<std::string, FieldRange> rangesByName;
+    if (m_dataset) {
+        const auto& oldFields = m_dataset->metadata().fields;
+        if (m_controlsReady && m_trackedField < oldFields.size()) {
+            commitFieldRange(m_trackedField);
+        }
+        for (const auto& [field, range] : m_fieldRanges) {
+            if (field < oldFields.size()) {
+                rangesByName[oldFields[field].name] = range;
+            }
+        }
+    }
+
     m_dataset = result.dataset;
+    m_installedDerivedFields = result.derivedFields;
     const auto& metadata = m_dataset->metadata();
+    m_fieldRanges.clear();
+    for (std::size_t field = 0; field < metadata.fields.size(); ++field) {
+        if (const auto range = rangesByName.find(metadata.fields[field].name);
+            range != rangesByName.end()) {
+            m_fieldRanges[static_cast<std::uint32_t>(field)] = range->second;
+        }
+    }
     m_viewDimension = metadata.dimension;
     m_vectorUField = static_cast<int>(result.vectorUField);
     m_vectorVField = static_cast<int>(result.vectorVField);
