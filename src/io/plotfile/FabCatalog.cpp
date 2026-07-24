@@ -1,7 +1,7 @@
-#include <amrvis/io/FabCatalog.hpp>
+#include <amrexplorer/io/FabCatalog.hpp>
 
-#include <amrvis/io/PlotfileMetadataReader.hpp>
-#include <amrvis/io/StandaloneMetadataReader.hpp>
+#include <amrexplorer/io/PlotfileMetadataReader.hpp>
+#include <amrexplorer/io/StandaloneMetadataReader.hpp>
 
 #include <algorithm>
 #include <array>

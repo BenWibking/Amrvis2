@@ -1,4 +1,4 @@
-#include <amrvis/query/LineQuery.hpp>
+#include <amrexplorer/query/LineQuery.hpp>
 
 #include <algorithm>
 #include <cmath>

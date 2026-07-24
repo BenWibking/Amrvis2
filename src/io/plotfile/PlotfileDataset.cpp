@@ -1,5 +1,5 @@
-#include <amrvis/io/PlotfileDataset.hpp>
-#include <amrvis/io/StandaloneMetadataReader.hpp>
+#include <amrexplorer/io/PlotfileDataset.hpp>
+#include <amrexplorer/io/StandaloneMetadataReader.hpp>
 
 #include <cstddef>
 #include <mutex>

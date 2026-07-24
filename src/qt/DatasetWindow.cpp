@@ -1,8 +1,8 @@
 #include "DatasetWindow.hpp"
 #include "NumberFormat.hpp"
 
-#include <amrvis/io/PlotfileBlockReader.hpp>
-#include <amrvis/io/PlotfileDataset.hpp>
+#include <amrexplorer/io/PlotfileBlockReader.hpp>
+#include <amrexplorer/io/PlotfileDataset.hpp>
 
 #include <QCloseEvent>
 #include <QColor>

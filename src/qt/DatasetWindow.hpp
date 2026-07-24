@@ -2,9 +2,9 @@
 
 #include "DatasetExtract.hpp"
 
-#include <amrvis/core/Geometry.hpp>
-#include <amrvis/core/Request.hpp>
-#include <amrvis/core/StopToken.hpp>
+#include <amrexplorer/core/Geometry.hpp>
+#include <amrexplorer/core/Request.hpp>
+#include <amrexplorer/core/StopToken.hpp>
 
 #include <QString>
 #include <QWidget>

@@ -1,5 +1,5 @@
-#include <amrvis/render2d/Palette.hpp>
-#include <amrvis/render2d/ScalarRenderer.hpp>
+#include <amrexplorer/render2d/Palette.hpp>
+#include <amrexplorer/render2d/ScalarRenderer.hpp>
 
 #include <cstdint>
 #include <cstdlib>
@@ -60,7 +60,7 @@ int main(int argc, char** argv)
 
     // load() rejects a truncated file.
     const auto truncatedPath = std::filesystem::temp_directory_path()
-        / "amrvis_test_palette_truncated.pal";
+        / "amrexplorer_test_palette_truncated.pal";
     {
         std::ofstream stream(truncatedPath, std::ios::binary);
         stream.write(fileBytes.data(), 100);

@@ -1,4 +1,4 @@
-#include <amrvis/render2d/Contours.hpp>
+#include <amrexplorer/render2d/Contours.hpp>
 
 #include <algorithm>
 #include <array>
