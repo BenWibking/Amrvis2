@@ -162,6 +162,13 @@ bool exerciseExpressionEditor(amrvis::qt::MainWindow& window)
     if (fieldSelector == nullptr) {
         return false;
     }
+    const auto nativeFieldIndex =
+        fieldSelector->findText(QStringLiteral("temperature"));
+    if (nativeFieldIndex < 0) {
+        return false;
+    }
+    fieldSelector->setCurrentIndex(nativeFieldIndex);
+    const auto selectedNativeField = fieldSelector->currentText();
 
     const auto edit = [&](const auto& interaction) {
         auto* action = window.findChild<QAction*>(
@@ -257,10 +264,13 @@ bool exerciseExpressionEditor(amrvis::qt::MainWindow& window)
         return true;
     });
     if (!created || fieldSelector->findText(
-            QStringLiteral("twice-density")) < 0) {
+            QStringLiteral("twice-density")) < 0
+        || fieldSelector->currentText() != selectedNativeField) {
         return false;
     }
 
+    fieldSelector->setCurrentIndex(
+        fieldSelector->findText(QStringLiteral("twice-density")));
     const auto edited = edit([](QDialog& dialog) {
         auto* list = dialog.findChild<QListWidget*>(
             QStringLiteral("expressionList"));
@@ -282,7 +292,54 @@ bool exerciseExpressionEditor(amrvis::qt::MainWindow& window)
     });
     if (!edited || fieldSelector->findText(
             QStringLiteral("twice-density")) >= 0
-        || fieldSelector->findText(QStringLiteral("triple-density")) < 0) {
+        || fieldSelector->findText(QStringLiteral("triple-density")) < 0
+        || fieldSelector->currentText() != QStringLiteral("triple-density")) {
+        return false;
+    }
+
+    const auto addedUnrelated = edit([](QDialog& dialog) {
+        auto* add = dialog.findChild<QPushButton*>(
+            QStringLiteral("newExpressionButton"));
+        auto* name = dialog.findChild<QLineEdit*>(
+            QStringLiteral("expressionName"));
+        auto* source = dialog.findChild<QPlainTextEdit*>(
+            QStringLiteral("expressionSource"));
+        auto* apply = dialog.findChild<QPushButton*>(
+            QStringLiteral("applyExpressionsButton"));
+        if (add == nullptr || name == nullptr || source == nullptr
+            || apply == nullptr) {
+            return false;
+        }
+        add->click();
+        name->setText(QStringLiteral("four-density"));
+        source->setPlainText(QStringLiteral("4*density"));
+        apply->click();
+        return true;
+    });
+    if (!addedUnrelated
+        || fieldSelector->findText(QStringLiteral("four-density")) < 0
+        || fieldSelector->currentText() != QStringLiteral("triple-density")) {
+        return false;
+    }
+
+    const auto editedUnrelated = edit([](QDialog& dialog) {
+        auto* list = dialog.findChild<QListWidget*>(
+            QStringLiteral("expressionList"));
+        auto* source = dialog.findChild<QPlainTextEdit*>(
+            QStringLiteral("expressionSource"));
+        auto* apply = dialog.findChild<QPushButton*>(
+            QStringLiteral("applyExpressionsButton"));
+        if (list == nullptr || list->count() != 2 || source == nullptr
+            || apply == nullptr) {
+            return false;
+        }
+        list->setCurrentRow(1);
+        source->setPlainText(QStringLiteral("5*density"));
+        apply->click();
+        return true;
+    });
+    if (!editedUnrelated
+        || fieldSelector->currentText() != QStringLiteral("triple-density")) {
         return false;
     }
 
@@ -293,17 +350,20 @@ bool exerciseExpressionEditor(amrvis::qt::MainWindow& window)
             QStringLiteral("deleteExpressionButton"));
         auto* apply = dialog.findChild<QPushButton*>(
             QStringLiteral("applyExpressionsButton"));
-        if (list == nullptr || list->count() != 1 || remove == nullptr
+        if (list == nullptr || list->count() != 2 || remove == nullptr
             || apply == nullptr) {
             return false;
         }
+        list->setCurrentRow(1);
+        remove->click();
         list->setCurrentRow(0);
         remove->click();
         apply->click();
         return true;
     });
     return deleted
-        && fieldSelector->findText(QStringLiteral("triple-density")) < 0;
+        && fieldSelector->findText(QStringLiteral("triple-density")) < 0
+        && fieldSelector->findText(QStringLiteral("four-density")) < 0;
 }
 
 bool applyExpressionDefinition(amrvis::qt::MainWindow& window,
@@ -765,6 +825,16 @@ int main(int argc, char* argv[])
                     application.exit(1);
                     return;
                 }
+                auto* fieldSelector = window.findChild<QComboBox*>(
+                    QStringLiteral("fieldSelector"));
+                const auto scaledIndex = fieldSelector == nullptr
+                    ? -1
+                    : fieldSelector->findText(QStringLiteral("scaled-q"));
+                if (scaledIndex < 0) {
+                    application.exit(1);
+                    return;
+                }
+                fieldSelector->setCurrentIndex(scaledIndex);
                 animationPanel->sweepPlayToggled();
                 if (playbackTimer->isActive()) {
                     application.exit(1);

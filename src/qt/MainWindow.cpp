@@ -1788,6 +1788,19 @@ void MainWindow::showExpressionEditor()
     dialog.resize(760, 460);
 
     auto definitions = m_installedDerivedFields;
+    const auto displayedFieldName =
+        m_fieldSelector->currentText().toStdString();
+    const auto displayedDefinition = std::find_if(
+        m_installedDerivedFields.begin(), m_installedDerivedFields.end(),
+        [&displayedFieldName](const auto& definition) {
+            return definition.first == displayedFieldName;
+        });
+    std::optional<std::size_t> displayedDefinitionIndex;
+    if (displayedDefinition != m_installedDerivedFields.end()) {
+        displayedDefinitionIndex = static_cast<std::size_t>(
+            std::distance(
+                m_installedDerivedFields.begin(), displayedDefinition));
+    }
     auto* expressionList = new QListWidget(&dialog);
     expressionList->setObjectName(QStringLiteral("expressionList"));
     expressionList->setMinimumWidth(190);
@@ -1920,6 +1933,13 @@ void MainWindow::showExpressionEditor()
         if (row < 0 || static_cast<std::size_t>(row) >= definitions.size()) {
             return;
         }
+        const auto removedIndex = static_cast<std::size_t>(row);
+        if (displayedDefinitionIndex == removedIndex) {
+            displayedDefinitionIndex.reset();
+        } else if (displayedDefinitionIndex
+            && *displayedDefinitionIndex > removedIndex) {
+            --*displayedDefinitionIndex;
+        }
         definitions.erase(definitions.begin() + row);
         refreshList();
         if (!definitions.empty()) {
@@ -1991,6 +2011,17 @@ void MainWindow::showExpressionEditor()
         }
 
         definitions = std::move(imported);
+        displayedDefinitionIndex.reset();
+        const auto importedDisplayedDefinition = std::find_if(
+            definitions.begin(), definitions.end(),
+            [&displayedFieldName](const auto& definition) {
+                return definition.first == displayedFieldName;
+            });
+        if (importedDisplayedDefinition != definitions.end()) {
+            displayedDefinitionIndex = static_cast<std::size_t>(
+                std::distance(
+                    definitions.begin(), importedDisplayedDefinition));
+        }
         refreshList();
         if (definitions.empty()) {
             loadSelection(-1);
@@ -2064,10 +2095,10 @@ void MainWindow::showExpressionEditor()
             const auto oldVectorUName = vectorFieldName(m_vectorUField);
             const auto oldVectorVName = vectorFieldName(m_vectorVField);
             const auto oldVectorWName = vectorFieldName(m_vectorWField);
-            const auto targetName = expressionList->currentRow() >= 0
-                ? QString::fromStdString(definitions[
-                    static_cast<std::size_t>(
-                        expressionList->currentRow())].first)
+            const auto targetName = displayedDefinitionIndex
+                    && *displayedDefinitionIndex < definitions.size()
+                ? QString::fromStdString(
+                    definitions[*displayedDefinitionIndex].first)
                 : selectedFieldName;
             const auto cacheBudget = m_dataset->cacheMetrics().budgetBytes;
             auto replacement = std::make_shared<PlotfileDataset>(
