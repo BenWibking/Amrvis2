@@ -25,6 +25,7 @@
 
 #include <QAction>
 #include <QActionGroup>
+#include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -35,6 +36,7 @@
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QException>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontMetrics>
@@ -44,6 +46,10 @@
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QLabel>
 #include <QListView>
 #include <QListWidget>
@@ -58,6 +64,7 @@
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QRect>
+#include <QSaveFile>
 #include <QSettings>
 #include <QShortcut>
 #include <QSignalBlocker>
@@ -1752,14 +1759,22 @@ void MainWindow::showExpressionEditor()
     add->setObjectName(QStringLiteral("newExpressionButton"));
     auto* remove = new QPushButton(tr("&Delete"), &dialog);
     remove->setObjectName(QStringLiteral("deleteExpressionButton"));
+    auto* importDefinitions = new QPushButton(tr("&Import..."), &dialog);
+    importDefinitions->setObjectName(QStringLiteral("importExpressionsButton"));
+    auto* exportDefinitions = new QPushButton(tr("E&xport..."), &dialog);
+    exportDefinitions->setObjectName(QStringLiteral("exportExpressionsButton"));
 
     auto* sidebarButtons = new QHBoxLayout;
     sidebarButtons->addWidget(add);
     sidebarButtons->addWidget(remove);
+    auto* fileButtons = new QHBoxLayout;
+    fileButtons->addWidget(importDefinitions);
+    fileButtons->addWidget(exportDefinitions);
     auto* sidebar = new QVBoxLayout;
     sidebar->addWidget(new QLabel(tr("Expressions"), &dialog));
     sidebar->addWidget(expressionList, 1);
     sidebar->addLayout(sidebarButtons);
+    sidebar->addLayout(fileButtons);
     auto* sidebarWidget = new QWidget(&dialog);
     sidebarWidget->setLayout(sidebar);
 
@@ -1874,6 +1889,109 @@ void MainWindow::showExpressionEditor()
                 std::min(row, static_cast<int>(definitions.size() - 1)));
         } else {
             loadSelection(-1);
+        }
+    });
+    connect(importDefinitions, &QPushButton::clicked, &dialog, [&] {
+        const auto options = QApplication::platformName() == "offscreen"
+                                 ? QFileDialog::DontUseNativeDialog
+                                 : QFileDialog::Options{};
+        const auto filename = QFileDialog::getOpenFileName(
+            &dialog, tr("Import Expressions"), QString(),
+            tr("Expression lists (*.json);;All files (*)"), nullptr, options);
+        if (filename.isEmpty()) {
+            return;
+        }
+
+        QFile file(filename);
+        if (!file.open(QIODevice::ReadOnly)) {
+            QMessageBox::critical(&dialog, tr("Cannot import expressions"),
+                                  tr("Could not open %1: %2")
+                                      .arg(QDir::toNativeSeparators(filename), file.errorString()));
+            return;
+        }
+        QJsonParseError parseError;
+        const auto document = QJsonDocument::fromJson(file.readAll(), &parseError);
+        if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+            QMessageBox::critical(
+                &dialog, tr("Cannot import expressions"),
+                tr("%1 is not a valid expression-list JSON file: %2")
+                    .arg(QDir::toNativeSeparators(filename), parseError.errorString()));
+            return;
+        }
+
+        const auto root = document.object();
+        const auto format = root.value(QStringLiteral("format"));
+        const auto version = root.value(QStringLiteral("version"));
+        const auto entries = root.value(QStringLiteral("expressions"));
+        if (!format.isString() || format.toString() != QStringLiteral("amrvis2-expression-list") ||
+            !version.isDouble() || version.toInt() != 1 || !entries.isArray()) {
+            QMessageBox::critical(&dialog, tr("Cannot import expressions"),
+                                  tr("%1 does not contain a supported Amrvis2 expression list.")
+                                      .arg(QDir::toNativeSeparators(filename)));
+            return;
+        }
+
+        std::vector<std::pair<std::string, std::string>> imported;
+        imported.reserve(static_cast<std::size_t>(entries.toArray().size()));
+        for (const auto& value : entries.toArray()) {
+            if (!value.isObject()) {
+                QMessageBox::critical(&dialog, tr("Cannot import expressions"),
+                                      tr("Every expression-list entry must be an object."));
+                return;
+            }
+            const auto entry = value.toObject();
+            const auto importedName = entry.value(QStringLiteral("name"));
+            const auto importedExpression = entry.value(QStringLiteral("expression"));
+            if (!importedName.isString() || !importedExpression.isString()) {
+                QMessageBox::critical(&dialog, tr("Cannot import expressions"),
+                                      tr("Every expression-list entry must have string "
+                                         "\"name\" and \"expression\" values."));
+                return;
+            }
+            imported.emplace_back(importedName.toString().trimmed().toStdString(),
+                                  importedExpression.toString().trimmed().toStdString());
+        }
+
+        definitions = std::move(imported);
+        refreshList();
+        if (definitions.empty()) {
+            loadSelection(-1);
+        } else {
+            expressionList->setCurrentRow(0);
+            loadSelection(0);
+        }
+    });
+    connect(exportDefinitions, &QPushButton::clicked, &dialog, [&] {
+        const auto options = QApplication::platformName() == "offscreen"
+                                 ? QFileDialog::DontUseNativeDialog
+                                 : QFileDialog::Options{};
+        auto filename = QFileDialog::getSaveFileName(
+            &dialog, tr("Export Expressions"), QStringLiteral("expressions.json"),
+            tr("Expression lists (*.json);;All files (*)"), nullptr, options);
+        if (filename.isEmpty()) {
+            return;
+        }
+        if (QFileInfo(filename).suffix().isEmpty()) {
+            filename += QStringLiteral(".json");
+        }
+
+        QJsonArray entries;
+        for (const auto& [fieldName, parserExpression] : definitions) {
+            entries.append(QJsonObject{
+                {QStringLiteral("name"), QString::fromStdString(fieldName)},
+                {QStringLiteral("expression"), QString::fromStdString(parserExpression)}});
+        }
+        const QJsonObject root{
+            {QStringLiteral("format"), QStringLiteral("amrvis2-expression-list")},
+            {QStringLiteral("version"), 1},
+            {QStringLiteral("expressions"), entries}};
+
+        QSaveFile file(filename);
+        if (!file.open(QIODevice::WriteOnly) ||
+            file.write(QJsonDocument(root).toJson(QJsonDocument::Indented)) < 0 || !file.commit()) {
+            QMessageBox::critical(&dialog, tr("Cannot export expressions"),
+                                  tr("Could not write %1: %2")
+                                      .arg(QDir::toNativeSeparators(filename), file.errorString()));
         }
     });
     connect(name, &QLineEdit::textChanged, &dialog, [&](const QString& text) {

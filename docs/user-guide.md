@@ -155,6 +155,10 @@ expression may reference expressions above it in the list. Changes are
 validated together when you select **Apply**, so an invalid rename, deletion,
 or expression leaves the current dataset unchanged.
 
+Use **Import...** to replace the draft list with expressions from an Amrvis2
+JSON expression-list file, and **Export...** to save the current draft list.
+Imported expressions remain drafts until you select **Apply**.
+
 Expressions are single-line algebra using `+`, `-`, `*`, `/`, and `**`, with
 `sqrt`, `pow`, `exp`, `log`, `exp10`, and `log10`.
 For example:

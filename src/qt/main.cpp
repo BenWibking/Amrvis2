@@ -7,6 +7,7 @@
 #include <QDialog>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QIcon>
@@ -21,6 +22,7 @@
 #include <QStandardPaths>
 #include <QTableView>
 #include <QTextStream>
+#include <QTemporaryDir>
 #include <QTimer>
 
 #include <array>
@@ -178,22 +180,74 @@ bool exerciseExpressionEditor(amrvis::qt::MainWindow& window)
         return completed;
     };
 
-    const auto created = edit([](QDialog& dialog) {
+    QTemporaryDir temporary;
+    if (!temporary.isValid()) {
+        return false;
+    }
+    const auto expressionListPath = temporary.filePath(QStringLiteral("expressions.json"));
+
+    const auto created = edit([&expressionListPath](QDialog& dialog) {
         auto* add = dialog.findChild<QPushButton*>(
             QStringLiteral("newExpressionButton"));
+        auto* remove = dialog.findChild<QPushButton*>(
+            QStringLiteral("deleteExpressionButton"));
+        auto* importDefinitions =
+            dialog.findChild<QPushButton*>(QStringLiteral("importExpressionsButton"));
+        auto* exportDefinitions =
+            dialog.findChild<QPushButton*>(QStringLiteral("exportExpressionsButton"));
+        auto* list = dialog.findChild<QListWidget*>(
+            QStringLiteral("expressionList"));
         auto* name = dialog.findChild<QLineEdit*>(
             QStringLiteral("expressionName"));
         auto* source = dialog.findChild<QPlainTextEdit*>(
             QStringLiteral("expressionSource"));
         auto* apply = dialog.findChild<QPushButton*>(
             QStringLiteral("applyExpressionsButton"));
-        if (add == nullptr || name == nullptr || source == nullptr
-            || apply == nullptr) {
+        if (add == nullptr || remove == nullptr || importDefinitions == nullptr ||
+            exportDefinitions == nullptr || list == nullptr || name == nullptr ||
+            source == nullptr || apply == nullptr) {
             return false;
         }
         add->click();
         name->setText(QStringLiteral("twice-density"));
         source->setPlainText(QStringLiteral("2*density"));
+
+        bool exportCompleted = false;
+        QTimer::singleShot(0, &dialog, [&] {
+            auto* picker = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+            if (picker == nullptr) {
+                return;
+            }
+            picker->selectFile(expressionListPath);
+            exportCompleted = true;
+            static_cast<QDialog*>(picker)->accept();
+        });
+        exportDefinitions->click();
+        if (!exportCompleted || !QFileInfo::exists(expressionListPath)) {
+            return false;
+        }
+
+        remove->click();
+        if (list->count() != 0) {
+            return false;
+        }
+        bool importCompleted = false;
+        QTimer::singleShot(0, &dialog, [&] {
+            auto* picker = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+            if (picker == nullptr) {
+                return;
+            }
+            picker->selectFile(expressionListPath);
+            importCompleted = true;
+            static_cast<QDialog*>(picker)->accept();
+        });
+        importDefinitions->click();
+        if (!importCompleted || list->count() != 1 ||
+            name->text() != QStringLiteral("twice-density") ||
+            source->toPlainText() != QStringLiteral("2*density")) {
+            return false;
+        }
+
         apply->click();
         return true;
     });
