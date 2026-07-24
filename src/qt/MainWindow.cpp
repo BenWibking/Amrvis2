@@ -44,6 +44,7 @@
 #include <QImage>
 #include <QLabel>
 #include <QListView>
+#include <QListWidget>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
@@ -59,6 +60,7 @@
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QSplitter>
 #include <QStackedWidget>
 #include <QStandardItemModel>
 #include <QStatusBar>
@@ -997,6 +999,7 @@ MainWindow::MainWindow(QWidget* parent)
     sliceToolbar->setMovable(false);
     sliceToolbar->addWidget(new QLabel(tr("Field:"), sliceToolbar));
     m_fieldSelector = new QComboBox(sliceToolbar);
+    m_fieldSelector->setObjectName(QStringLiteral("fieldSelector"));
     m_fieldSelector->setMinimumContentsLength(10);
     m_fieldSelector->view()->setItemDelegate(new CurrentRowBulletDelegate(
         m_fieldSelector, m_fieldSelector->view()));
@@ -1635,9 +1638,11 @@ void MainWindow::rebuildVariableMenu()
         });
     }
     m_variableMenu->addSeparator();
-    auto* addDerived = m_variableMenu->addAction(tr("&Add Derived Field..."));
-    connect(addDerived, &QAction::triggered, this,
-        [this] { showAddDerivedFieldDialog(); });
+    auto* editExpressions =
+        m_variableMenu->addAction(tr("&Expression Editor..."));
+    editExpressions->setObjectName(QStringLiteral("expressionEditorAction"));
+    connect(editExpressions, &QAction::triggered, this,
+        [this] { showExpressionEditor(); });
 }
 
 void MainWindow::syncVariableMenu()
@@ -1655,34 +1660,65 @@ void MainWindow::syncVariableMenu()
     }
 }
 
-void MainWindow::showAddDerivedFieldDialog()
+void MainWindow::showExpressionEditor()
 {
     if (!m_dataset) {
         return;
     }
     if (m_activeRequests != 0) {
-        QMessageBox::information(this, tr("Derived field is not ready"),
-            tr("Wait for the current dataset request to finish, then add the "
-               "derived field."));
+        QMessageBox::information(this, tr("Expression Editor is not ready"),
+            tr("Wait for the current dataset request to finish, then edit the "
+               "expressions."));
         return;
     }
 
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("Add Derived Field"));
+    dialog.setObjectName(QStringLiteral("expressionEditor"));
+    dialog.setWindowTitle(tr("Expression Editor"));
+    dialog.resize(760, 460);
+
+    auto definitions = m_derivedFields;
+    auto* expressionList = new QListWidget(&dialog);
+    expressionList->setObjectName(QStringLiteral("expressionList"));
+    expressionList->setMinimumWidth(190);
+    expressionList->setSelectionMode(QAbstractItemView::SingleSelection);
+
+    auto* add = new QPushButton(tr("&New"), &dialog);
+    add->setObjectName(QStringLiteral("newExpressionButton"));
+    auto* remove = new QPushButton(tr("&Delete"), &dialog);
+    remove->setObjectName(QStringLiteral("deleteExpressionButton"));
+
+    auto* sidebarButtons = new QHBoxLayout;
+    sidebarButtons->addWidget(add);
+    sidebarButtons->addWidget(remove);
+    auto* sidebar = new QVBoxLayout;
+    sidebar->addWidget(new QLabel(tr("Expressions"), &dialog));
+    sidebar->addWidget(expressionList, 1);
+    sidebar->addLayout(sidebarButtons);
+    auto* sidebarWidget = new QWidget(&dialog);
+    sidebarWidget->setLayout(sidebar);
+
     auto* name = new QLineEdit(&dialog);
+    name->setObjectName(QStringLiteral("expressionName"));
     name->setPlaceholderText(tr("e.g. speed"));
-    auto* expression = new QLineEdit(&dialog);
+    auto* expression = new QPlainTextEdit(&dialog);
+    expression->setObjectName(QStringLiteral("expressionSource"));
     expression->setPlaceholderText(
         tr("e.g. sqrt(x_velocity**2 + y_velocity**2)"));
-    expression->setMinimumWidth(440);
+    expression->setTabChangesFocus(true);
+    expression->setMinimumWidth(430);
+    expression->setMaximumHeight(110);
 
     QStringList variables;
-    for (const auto& field : m_dataset->metadata().fields) {
-        variables.push_back(QString::fromStdString(field.name));
+    const auto& currentFields = m_dataset->metadata().fields;
+    const auto storedFieldCount = currentFields.size() - m_derivedFields.size();
+    for (std::size_t field = 0; field < storedFieldCount; ++field) {
+        variables.push_back(QString::fromStdString(currentFields[field].name));
     }
     auto* help = new QLabel(
         tr("Operators: + - * / **. Functions: sqrt, pow, exp, log, exp10, "
-           "log10. Available scalar fields: %1")
+           "log10.\nAvailable dataset fields: %1\n"
+           "Expressions may also reference expressions above them in the list.")
             .arg(variables.join(QStringLiteral(", "))),
         &dialog);
     help->setWordWrap(true);
@@ -1690,55 +1726,230 @@ void MainWindow::showAddDerivedFieldDialog()
     auto* form = new QFormLayout;
     form->addRow(tr("&Name:"), name);
     form->addRow(tr("&Expression:"), expression);
+    auto* editor = new QVBoxLayout;
+    editor->addLayout(form);
+    editor->addWidget(help);
+    editor->addStretch(1);
+    auto* editorWidget = new QWidget(&dialog);
+    editorWidget->setLayout(editor);
+
+    auto* splitter = new QSplitter(Qt::Horizontal, &dialog);
+    splitter->addWidget(sidebarWidget);
+    splitter->addWidget(editorWidget);
+    splitter->setStretchFactor(0, 0);
+    splitter->setStretchFactor(1, 1);
+
     auto* buttons = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+        QDialogButtonBox::Apply | QDialogButtonBox::Cancel, &dialog);
+    auto* apply = buttons->button(QDialogButtonBox::Apply);
+    apply->setObjectName(QStringLiteral("applyExpressionsButton"));
+    apply->setText(tr("Apply"));
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     auto* layout = new QVBoxLayout(&dialog);
-    layout->addLayout(form);
-    layout->addWidget(help);
+    layout->addWidget(splitter, 1);
     layout->addWidget(buttons);
 
-    if (dialog.exec() != QDialog::Accepted) {
-        return;
-    }
-    const auto fieldName = name->text().trimmed().toStdString();
-    const auto parserExpression = expression->text().trimmed().toStdString();
-    try {
-        const auto field = m_dataset->addDerivedField({
-            .name = fieldName,
-            .expression = parserExpression
-        });
-        m_derivedFields.emplace_back(fieldName, parserExpression);
-        m_fieldRanges[field.value] = FieldRange{
-            .mode = RangeMode::Visible,
-            .userRange = std::nullopt
-        };
-        ++m_specGeneration;
-        discardPrefetch();
-
-        {
-            const QSignalBlocker blocker(m_fieldSelector);
-            m_fieldSelector->addItem(
-                QString::fromStdString(fieldName), field.value);
+    const auto displayName = [](const auto& definition) {
+        return definition.first.empty()
+            ? QCoreApplication::translate(
+                "MainWindow", "(New expression)")
+            : QString::fromStdString(definition.first);
+    };
+    const auto refreshList = [&] {
+        const QSignalBlocker blocker(expressionList);
+        expressionList->clear();
+        for (const auto& definition : definitions) {
+            expressionList->addItem(displayName(definition));
         }
-        rebuildVariableMenu();
-
-        PlotfileMetadataResult displayedMetadata;
-        displayedMetadata.metadata =
-            std::make_shared<DatasetMetadata>(m_dataset->metadata());
-        displayedMetadata.metrics = m_dataset->metadataReadMetrics();
-        displayedMetadata.fileVersion = m_fileVersion;
-        showMetadata(displayedMetadata, m_datasetPath);
-
-        const auto index = m_fieldSelector->findData(field.value);
-        if (index >= 0) {
-            m_fieldSelector->setCurrentIndex(index);
+    };
+    const auto loadSelection = [&](int row) {
+        const QSignalBlocker nameBlocker(name);
+        const QSignalBlocker expressionBlocker(expression);
+        const auto valid = row >= 0
+            && static_cast<std::size_t>(row) < definitions.size();
+        name->setEnabled(valid);
+        expression->setEnabled(valid);
+        remove->setEnabled(valid);
+        if (valid) {
+            const auto& definition = definitions[static_cast<std::size_t>(row)];
+            name->setText(QString::fromStdString(definition.first));
+            expression->setPlainText(
+                QString::fromStdString(definition.second));
+        } else {
+            name->clear();
+            expression->clear();
         }
-    } catch (const std::exception& error) {
-        QMessageBox::critical(this, tr("Cannot add derived field"),
-            QString::fromUtf8(error.what()));
+    };
+    refreshList();
+    if (!definitions.empty()) {
+        expressionList->setCurrentRow(0);
+        loadSelection(0);
+    } else {
+        loadSelection(-1);
     }
+
+    connect(expressionList, &QListWidget::currentRowChanged, &dialog,
+        loadSelection);
+    connect(add, &QPushButton::clicked, &dialog, [&] {
+        definitions.emplace_back();
+        refreshList();
+        expressionList->setCurrentRow(
+            static_cast<int>(definitions.size() - 1));
+        name->setFocus();
+    });
+    connect(remove, &QPushButton::clicked, &dialog, [&] {
+        const auto row = expressionList->currentRow();
+        if (row < 0 || static_cast<std::size_t>(row) >= definitions.size()) {
+            return;
+        }
+        definitions.erase(definitions.begin() + row);
+        refreshList();
+        if (!definitions.empty()) {
+            expressionList->setCurrentRow(
+                std::min(row, static_cast<int>(definitions.size() - 1)));
+        } else {
+            loadSelection(-1);
+        }
+    });
+    connect(name, &QLineEdit::textChanged, &dialog, [&](const QString& text) {
+        const auto row = expressionList->currentRow();
+        if (row < 0 || static_cast<std::size_t>(row) >= definitions.size()) {
+            return;
+        }
+        definitions[static_cast<std::size_t>(row)].first =
+            text.trimmed().toStdString();
+        expressionList->item(row)->setText(
+            displayName(definitions[static_cast<std::size_t>(row)]));
+    });
+    connect(expression, &QPlainTextEdit::textChanged, &dialog, [&] {
+        const auto row = expressionList->currentRow();
+        if (row < 0 || static_cast<std::size_t>(row) >= definitions.size()) {
+            return;
+        }
+        definitions[static_cast<std::size_t>(row)].second =
+            expression->toPlainText().trimmed().toStdString();
+    });
+    connect(apply, &QPushButton::clicked, &dialog, [&] {
+        try {
+            const auto oldMetadata = m_dataset->metadata();
+            const auto selectedFieldName = m_fieldSelector->currentText();
+            const auto vectorFieldName = [&](int field) -> std::string {
+                return field >= 0
+                    && static_cast<std::size_t>(field)
+                        < oldMetadata.fields.size()
+                    ? oldMetadata.fields[static_cast<std::size_t>(field)].name
+                    : std::string();
+            };
+            const auto oldVectorUName = vectorFieldName(m_vectorUField);
+            const auto oldVectorVName = vectorFieldName(m_vectorVField);
+            const auto oldVectorWName = vectorFieldName(m_vectorWField);
+            const auto targetName = expressionList->currentRow() >= 0
+                ? QString::fromStdString(definitions[
+                    static_cast<std::size_t>(
+                        expressionList->currentRow())].first)
+                : selectedFieldName;
+            const auto cacheBudget = m_dataset->cacheMetrics().budgetBytes;
+            auto replacement = std::make_shared<PlotfileDataset>(
+                m_datasetPath, m_dataset->id(), cacheBudget);
+            for (const auto& [fieldName, parserExpression] : definitions) {
+                [[maybe_unused]] const auto field =
+                    replacement->addDerivedField({
+                        .name = fieldName,
+                        .expression = parserExpression
+                    });
+            }
+
+            std::map<std::string, FieldRange> rangesByName;
+            for (const auto& [field, range] : m_fieldRanges) {
+                if (field < oldMetadata.fields.size()) {
+                    rangesByName[oldMetadata.fields[field].name] = range;
+                }
+            }
+
+            m_dataset = std::move(replacement);
+            m_derivedFields = definitions;
+            m_fieldRanges.clear();
+            const auto& metadata = m_dataset->metadata();
+            {
+                const QSignalBlocker blocker(m_fieldSelector);
+                m_fieldSelector->clear();
+                for (std::size_t field = 0; field < metadata.fields.size();
+                     ++field) {
+                    m_fieldSelector->addItem(
+                        QString::fromStdString(metadata.fields[field].name),
+                        static_cast<unsigned int>(field));
+                    if (const auto range =
+                            rangesByName.find(metadata.fields[field].name);
+                        range != rangesByName.end()) {
+                        m_fieldRanges[static_cast<std::uint32_t>(field)] =
+                            range->second;
+                    }
+                }
+                auto targetIndex = m_fieldSelector->findText(targetName);
+                if (targetIndex < 0) {
+                    targetIndex =
+                        m_fieldSelector->findText(selectedFieldName);
+                }
+                m_fieldSelector->setCurrentIndex(
+                    targetIndex >= 0 ? targetIndex : 0);
+            }
+            m_trackedField = m_fieldSelector->currentData().toUInt();
+            if (!m_fieldRanges.contains(m_trackedField)) {
+                m_fieldRanges[m_trackedField] = FieldRange{
+                    .mode = RangeMode::Visible,
+                    .userRange = std::nullopt
+                };
+            }
+            applyFieldRange(m_trackedField);
+            m_fullDomainRange.reset();
+            for (auto* state : currentViews()) {
+                state->hasCachedRequest = false;
+            }
+            closeDatasetWindow();
+            if (m_linePlotWindow != nullptr) {
+                auto* linePlotWindow = m_linePlotWindow;
+                m_linePlotWindow = nullptr;
+                linePlotWindow->close();
+            }
+            const auto findField = [&](const std::string& fieldName) {
+                if (fieldName.empty()) {
+                    return -1;
+                }
+                const auto found = std::find_if(
+                    metadata.fields.begin(), metadata.fields.end(),
+                    [&fieldName](const FieldMetadata& field) {
+                        return field.name == fieldName;
+                    });
+                return found == metadata.fields.end()
+                    ? -1
+                    : static_cast<int>(
+                        std::distance(metadata.fields.begin(), found));
+            };
+            m_vectorUField = findField(oldVectorUName);
+            m_vectorVField = findField(oldVectorVName);
+            m_vectorWField = findField(oldVectorWName);
+            ++m_specGeneration;
+            discardPrefetch();
+            rebuildVariableMenu();
+
+            PlotfileMetadataResult displayedMetadata;
+            displayedMetadata.metadata =
+                std::make_shared<DatasetMetadata>(metadata);
+            displayedMetadata.metrics = m_dataset->metadataReadMetrics();
+            displayedMetadata.fileVersion = m_fileVersion;
+            showMetadata(displayedMetadata, m_datasetPath);
+            ensureVectorFieldDefaults();
+            validateVectorMode();
+            updateRangeModeAvailability();
+            scheduleSliceRequest();
+            dialog.accept();
+        } catch (const std::exception& error) {
+            QMessageBox::critical(&dialog, tr("Cannot apply expressions"),
+                QString::fromUtf8(error.what()));
+        }
+    });
+
+    dialog.exec();
 }
 
 void MainWindow::syncPaletteChecks()

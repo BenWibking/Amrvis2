@@ -173,6 +173,17 @@ if(TARGET amrvis_qt)
     )
     set_tests_properties(qt_slice_smoke_2d PROPERTIES TIMEOUT 30)
     add_test(
+        NAME qt_expression_editor_smoke
+        COMMAND "${CMAKE_COMMAND}"
+            "-DMATERIALIZER=$<TARGET_FILE:fixture_materializer>"
+            "-DAMRVIS_QT=$<TARGET_FILE:amrvis_qt>"
+            "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/data/plotfile_2d"
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/fixtures_expression_editor"
+            -DMODE=expression-editor
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/qt_smoke_driver.cmake"
+    )
+    set_tests_properties(qt_expression_editor_smoke PROPERTIES TIMEOUT 30)
+    add_test(
         NAME qt_slice_smoke_3d
         COMMAND "${CMAKE_COMMAND}"
             "-DMATERIALIZER=$<TARGET_FILE:fixture_materializer>"
