@@ -6,6 +6,7 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDir>
+#include <QDoubleSpinBox>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -26,7 +27,9 @@
 #include <QTimer>
 
 #include <array>
+#include <cmath>
 #include <filesystem>
+#include <memory>
 #include <string_view>
 #include <vector>
 
@@ -301,6 +304,63 @@ bool exerciseExpressionEditor(amrvis::qt::MainWindow& window)
         && fieldSelector->findText(QStringLiteral("triple-density")) < 0;
 }
 
+bool applyExpressionDefinition(amrvis::qt::MainWindow& window,
+    const QString& fieldName, const QString& parserExpression)
+{
+    auto* action = window.findChild<QAction*>(
+        QStringLiteral("expressionEditorAction"));
+    if (action == nullptr) {
+        return false;
+    }
+    bool completed = false;
+    QTimer::singleShot(0, &window, [&] {
+        auto* dialog = window.findChild<QDialog*>(
+            QStringLiteral("expressionEditor"));
+        if (dialog == nullptr) {
+            return;
+        }
+        auto* add = dialog->findChild<QPushButton*>(
+            QStringLiteral("newExpressionButton"));
+        auto* list = dialog->findChild<QListWidget*>(
+            QStringLiteral("expressionList"));
+        auto* name = dialog->findChild<QLineEdit*>(
+            QStringLiteral("expressionName"));
+        auto* source = dialog->findChild<QPlainTextEdit*>(
+            QStringLiteral("expressionSource"));
+        auto* apply = dialog->findChild<QPushButton*>(
+            QStringLiteral("applyExpressionsButton"));
+        if (add == nullptr || list == nullptr || name == nullptr
+            || source == nullptr || apply == nullptr) {
+            dialog->reject();
+            return;
+        }
+        if (list->count() == 0) {
+            add->click();
+        } else {
+            list->setCurrentRow(0);
+        }
+        name->setText(fieldName);
+        source->setPlainText(parserExpression);
+        completed = true;
+        apply->click();
+    });
+    action->trigger();
+    return completed;
+}
+
+bool visibleRangeMatches(
+    const amrvis::qt::MainWindow& window, double minimum, double maximum)
+{
+    const auto* lower = window.findChild<QDoubleSpinBox*>(
+        QStringLiteral("rangeMinimum"));
+    const auto* upper = window.findChild<QDoubleSpinBox*>(
+        QStringLiteral("rangeMaximum"));
+    constexpr auto tolerance = 1.0e-6;
+    return lower != nullptr && upper != nullptr
+        && std::abs(lower->value() - minimum) < tolerance
+        && std::abs(upper->value() - maximum) < tolerance;
+}
+
 bool fabRangeSelectorMatches(const amrvis::qt::MainWindow& window)
 {
     const auto* selector = window.findChild<QComboBox*>(
@@ -540,6 +600,48 @@ int main(int argc, char* argv[])
                 const auto valid = success && exerciseExpressionEditor(window);
                 application.exit(valid ? 0 : 1);
             });
+        QTimer::singleShot(0, &window,
+            [&window, path] { window.openDataset(path); });
+    } else if (argc == 3
+        && std::string_view(argv[1]) == "--expression-range-smoke-test") {
+        struct SmokeState {
+            int phase = 0;
+            int completedSlices = 0;
+        };
+        const auto state = std::make_shared<SmokeState>();
+        const std::filesystem::path path(argv[2]);
+        QObject::connect(&window, &amrvis::qt::MainWindow::initialSliceFinished,
+            &application, [&window, &application, state](bool success) {
+                if (!success || !applyExpressionDefinition(window,
+                        QStringLiteral("scaled-q"),
+                        QStringLiteral("2*q"))) {
+                    application.exit(1);
+                    return;
+                }
+                state->phase = 1;
+                state->completedSlices = 0;
+            });
+        QObject::connect(&window, &amrvis::qt::MainWindow::sliceRequestFinished,
+            &application, [&window, &application, state] {
+                if (state->phase == 0 || ++state->completedSlices < 3) {
+                    return;
+                }
+                if (state->phase == 1) {
+                    state->phase = 2;
+                    state->completedSlices = 0;
+                    if (!applyExpressionDefinition(window,
+                            QStringLiteral("scaled-q"),
+                            QStringLiteral("3*q"))) {
+                        application.exit(1);
+                    }
+                    return;
+                }
+                const auto valid = visibleRangeMatches(
+                    window, 2.0 / 3.0, 8.0 / 3.0);
+                application.exit(valid ? 0 : 1);
+            });
+        QTimer::singleShot(20000, &application,
+            [&application] { application.exit(1); });
         QTimer::singleShot(0, &window,
             [&window, path] { window.openDataset(path); });
     } else if (argc == 3

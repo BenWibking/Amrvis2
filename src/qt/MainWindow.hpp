@@ -162,6 +162,10 @@ public:
 signals:
     void datasetOpenFinished(bool success);
     void initialSliceFinished(bool success);
+    // Emitted after one asynchronously requested panel slice finishes. The
+    // offscreen GUI regressions use this to inspect state only after all
+    // panels affected by an edit have settled.
+    void sliceRequestFinished();
     // Emitted once a sequence frame's slice(s) are on screen; the offscreen
     // smoke test drives frame stepping off it.
     void sequenceFrameDisplayed(int index);
@@ -208,6 +212,9 @@ private:
         int cachedContourCount = 0;
         StopSource stopSource;
         std::uint64_t sliceGeneration = 0;
+        // The generation that produced plane. In 3-D, shared Visible limits
+        // may only combine panels whose displayed/current generations match.
+        std::uint64_t displayedSliceGeneration = 0;
         // Slice requests currently on a worker for this view; the sweep
         // playback skips ticks while one is in flight.
         int pendingRequests = 0;
@@ -336,7 +343,7 @@ private:
     [[nodiscard]] int sliceIndexLevel() const;
     // Visible-range mode in 3-D: recompute the min/max from all three panels'
     // planes so the single color bar maps them consistently.
-    void syncVisibleRanges();
+    [[nodiscard]] bool syncVisibleRanges();
 
     // Slice requests: the debounce timer coalesces into per-view requests.
     // rasterDirty false means the trigger (contour mode/count) cannot change

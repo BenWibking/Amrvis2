@@ -206,6 +206,17 @@ if(TARGET amrvis_qt)
     )
     set_tests_properties(qt_expression_editor_smoke PROPERTIES TIMEOUT 30)
     add_test(
+        NAME qt_expression_range_smoke_3d
+        COMMAND "${CMAKE_COMMAND}"
+            "-DMATERIALIZER=$<TARGET_FILE:fixture_materializer>"
+            "-DAMRVIS_QT=$<TARGET_FILE:amrvis_qt>"
+            "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/data/plotfile_3d"
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/fixtures_expression_range_3d"
+            -DMODE=expression-range
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/qt_smoke_driver.cmake"
+    )
+    set_tests_properties(qt_expression_range_smoke_3d PROPERTIES TIMEOUT 30)
+    add_test(
         NAME qt_slice_smoke_3d
         COMMAND "${CMAKE_COMMAND}"
             "-DMATERIALIZER=$<TARGET_FILE:fixture_materializer>"

@@ -1144,6 +1144,8 @@ MainWindow::MainWindow(QWidget* parent)
     rangeToolbar->addWidget(m_rangeMode);
     m_rangeMinimum = new ScientificDoubleSpinBox(rangeToolbar);
     m_rangeMaximum = new ScientificDoubleSpinBox(rangeToolbar);
+    m_rangeMinimum->setObjectName(QStringLiteral("rangeMinimum"));
+    m_rangeMaximum->setObjectName(QStringLiteral("rangeMaximum"));
     for (auto* range : {m_rangeMinimum, m_rangeMaximum}) {
         range->setRange(-std::numeric_limits<double>::max(),
             std::numeric_limits<double>::max());
@@ -4272,6 +4274,8 @@ void MainWindow::requestInitialSlice(
                             continue;
                         }
                         showSlice(*views[index], result.displays[index]);
+                        views[index]->displayedSliceGeneration =
+                            views[index]->sliceGeneration;
                     }
                     const auto cache = m_dataset->cacheMetrics();
                     m_cacheBudgetBytes = cache.budgetBytes;
@@ -4626,11 +4630,15 @@ void MainWindow::requestSlice(PlaneViewState& state, bool rasterDirty)
                         result.maximum = m_fullDomainRange->second;
                     }
                     showSlice(state, result);
-                    syncVisibleRanges();
+                    state.displayedSliceGeneration = sliceGeneration;
+                    const auto visibleRangesSynchronized =
+                        syncVisibleRanges();
                     // Refresh the cache after syncVisibleRanges so the 3-D
                     // union across all panels is captured.
                     if (isFullDomain && rangeMode == RangeMode::Visible
-                        && state.plane.width > 0) {
+                        && state.plane.width > 0
+                        && (m_viewDimension != 3
+                            || visibleRangesSynchronized)) {
                         m_fullDomainRange = std::make_pair(
                             state.displayMinimum, state.displayMaximum);
                         m_fullDomainRangeField = result.request.field;
@@ -4659,6 +4667,7 @@ void MainWindow::requestSlice(PlaneViewState& state, bool rasterDirty)
                 }
             }
             updateDiagnostics();
+            emit sliceRequestFinished();
             watcher->deleteLater();
         });
     watcher->setFuture(future);
@@ -4898,18 +4907,27 @@ void MainWindow::showSlice(PlaneViewState& state, const SliceDisplayResult& disp
     statusBar()->clearMessage();
 }
 
-void MainWindow::syncVisibleRanges()
+bool MainWindow::syncVisibleRanges()
 {
     if (m_viewDimension != 3 || !m_dataset) {
-        return;
+        return false;
     }
     const auto rangeMode = static_cast<RangeMode>(
         m_rangeMode->currentData().toInt());
     if (rangeMode != RangeMode::Visible) {
-        return;
+        return false;
     }
     std::array<PlaneViewState*, 3> views{
         &m_planeViews[0], &m_planeViews[1], &m_planeViews[2]};
+    // Multi-panel requests finish independently. Do not combine a newly
+    // rendered plane with planes whose current requests have not completed;
+    // doing so would cache a hybrid range spanning two field definitions.
+    if (std::any_of(views.begin(), views.end(), [](const auto* state) {
+            return state->displayedSliceGeneration
+                != state->sliceGeneration;
+        })) {
+        return false;
+    }
     const bool logarithmic = m_logarithmic->isChecked();
 
     // Use the cached full-domain range when it is current, so the shared
@@ -4945,7 +4963,7 @@ void MainWindow::syncVisibleRanges()
         }
     }
     if (!std::isfinite(globalMin) || !std::isfinite(globalMax)) {
-        return;
+        return false;
     }
     if (globalMin == globalMax) {
         if (logarithmic && globalMin > 0.0) {
@@ -4998,6 +5016,7 @@ void MainWindow::syncVisibleRanges()
             m_rangeMaximum->setValue(globalMax);
         }
     }
+    return true;
 }
 
 void MainWindow::choosePlotfileSequence()
@@ -5263,6 +5282,8 @@ void MainWindow::displayFrameResult(InitialSliceResult& result,
     }
     for (std::size_t index = 0; index < views.size(); ++index) {
         showSlice(*views[index], result.displays[index]);
+        views[index]->displayedSliceGeneration =
+            views[index]->sliceGeneration;
     }
     const auto cache = m_dataset->cacheMetrics();
     m_cacheBudgetBytes = cache.budgetBytes;
