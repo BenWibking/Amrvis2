@@ -63,6 +63,8 @@ int main()
         require(close(evaluate("1."), 1.0), "trailing decimal failed");
         require(close(evaluate(".5"), 0.5), "leading decimal failed");
         require(close(evaluate("2.5E-3"), 0.0025), "exponent literal failed");
+        require(close(evaluate("0e-9999"), 0.0),
+            "zero with extreme exponent failed");
         require(close(evaluate(" 1 + 2 * 3 \t"), 7.0), "precedence failed");
         require(close(evaluate("8 / 2 - 1"), 3.0),
             "division or subtraction failed");
@@ -131,6 +133,7 @@ int main()
         requireError("1e+", 3, "invalid numeric exponent");
         requireError("1e9999", 0, "out of range");
         requireError("1e-9999", 0, "out of range");
+        requireError(".1e-9999", 0, "out of range");
 
         std::cout << "expression parser tests passed\n";
         return EXIT_SUCCESS;

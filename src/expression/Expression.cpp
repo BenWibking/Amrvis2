@@ -88,6 +88,19 @@ bool isIdentifierContinuation(char value)
         || value == '.';
 }
 
+bool hasNonzeroSignificand(std::string_view text)
+{
+    for (const auto value : text) {
+        if (value == 'e' || value == 'E') {
+            break;
+        }
+        if (value >= '1' && value <= '9') {
+            return true;
+        }
+    }
+    return false;
+}
+
 class Lexer {
 public:
     explicit Lexer(std::string_view source)
@@ -206,7 +219,8 @@ private:
         std::istringstream conversion(std::string{text});
         conversion.imbue(std::locale::classic());
         conversion >> result;
-        if (conversion.fail() || !std::isfinite(result)) {
+        if (conversion.fail() || !std::isfinite(result)
+            || (result == 0.0 && hasNonzeroSignificand(text))) {
             throw ExpressionError("numeric literal is out of range", offset);
         }
         if (!conversion.eof()) {
