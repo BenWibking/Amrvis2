@@ -6,7 +6,6 @@
 #endif
 
 #include <algorithm>
-#include <cctype>
 #include <cstddef>
 #include <limits>
 #include <mutex>
@@ -49,13 +48,43 @@ struct ParserFieldAlias {
     std::string parserName;
 };
 
-bool isParserIdentifierCharacter(char value)
+struct AliasedExpression {
+    std::string parserExpression;
+    std::vector<ParserFieldAlias> aliases;
+    std::vector<std::size_t> sourceOffsets;
+};
+
+bool isParserIdentifierStart(char value)
 {
-    const auto character = static_cast<unsigned char>(value);
-    return std::isalnum(character) != 0 || value == '_';
+    return (value >= 'a' && value <= 'z')
+        || (value >= 'A' && value <= 'Z') || value == '_';
 }
 
-std::pair<std::string, std::vector<ParserFieldAlias>> aliasDashedFieldNames(
+bool isParserIdentifierContinuation(char value)
+{
+    return isParserIdentifierStart(value)
+        || (value >= '0' && value <= '9') || value == '.';
+}
+
+bool isReferenceableFieldName(const std::string& name)
+{
+    if (name.empty() || !isParserIdentifierStart(name.front())) {
+        return false;
+    }
+    for (std::size_t position = 1; position < name.size(); ++position) {
+        if (isParserIdentifierContinuation(name[position])) {
+            continue;
+        }
+        if (name[position] != '-' || position + 1 == name.size()
+            || !isParserIdentifierStart(name[position + 1])) {
+            return false;
+        }
+        ++position;
+    }
+    return true;
+}
+
+AliasedExpression aliasDashedFieldNames(
     const std::string& expression, const std::vector<FieldMetadata>& fields)
 {
     std::vector<ParserFieldAlias> aliases;
@@ -84,6 +113,8 @@ std::pair<std::string, std::vector<ParserFieldAlias>> aliasDashedFieldNames(
 
     std::string rewritten;
     rewritten.reserve(expression.size());
+    std::vector<std::size_t> sourceOffsets;
+    sourceOffsets.reserve(expression.size() + 1);
     for (std::size_t position = 0; position < expression.size();) {
         const auto match = std::find_if(
             aliases.begin(), aliases.end(),
@@ -93,21 +124,47 @@ std::pair<std::string, std::vector<ParserFieldAlias>> aliasDashedFieldNames(
                     return false;
                 }
                 const auto beginsAtBoundary = position == 0
-                    || !isParserIdentifierCharacter(expression[position - 1]);
+                    || !isParserIdentifierContinuation(expression[position - 1]);
                 const auto end = position + length;
                 const auto endsAtBoundary = end == expression.size()
-                    || !isParserIdentifierCharacter(expression[end]);
+                    || !isParserIdentifierContinuation(expression[end]);
                 return beginsAtBoundary && endsAtBoundary;
             });
         if (match == aliases.end()) {
+            sourceOffsets.push_back(position);
             rewritten.push_back(expression[position]);
             ++position;
         } else {
+            sourceOffsets.insert(
+                sourceOffsets.end(), match->parserName.size(), position);
             rewritten += match->parserName;
             position += match->fieldName.size();
         }
     }
-    return {std::move(rewritten), std::move(aliases)};
+    sourceOffsets.push_back(expression.size());
+    return {
+        std::move(rewritten), std::move(aliases), std::move(sourceOffsets)};
+}
+
+IntBox ghostGrownBox(
+    const IntBox& source, const Int3& ghost, int dimension)
+{
+    auto result = source;
+    for (int axis = 0; axis < dimension; ++axis) {
+        const auto i = static_cast<std::size_t>(axis);
+        const auto lower = static_cast<std::int64_t>(source.lower[i]) - ghost[i];
+        const auto upper = static_cast<std::int64_t>(source.upper[i]) + ghost[i];
+        if (lower < std::numeric_limits<int>::min()
+            || lower > std::numeric_limits<int>::max()
+            || upper < std::numeric_limits<int>::min()
+            || upper > std::numeric_limits<int>::max()) {
+            throw BlockReadError(
+                "ghost-grown derived-field box exceeds supported integer range");
+        }
+        result.lower[i] = static_cast<int>(lower);
+        result.upper[i] = static_cast<int>(upper);
+    }
+    return result;
 }
 
 std::uint64_t pointCount(const IntBox& box, int dimension)
@@ -174,8 +231,11 @@ FieldId PlotfileDataset::addDerivedField(
     const DerivedFieldDefinition& definition)
 {
 #if AMRVIS_ENABLE_DERIVED_FIELDS
-    if (definition.name.empty()) {
-        throw std::invalid_argument("derived-field name must not be empty");
+    if (!isReferenceableFieldName(definition.name)) {
+        throw std::invalid_argument(
+            "derived-field name must match "
+            "[A-Za-z_][A-Za-z0-9_.]*"
+            "(-[A-Za-z_][A-Za-z0-9_.]*)*");
     }
     if (definition.expression.empty()) {
         throw std::invalid_argument("derived-field expression must not be empty");
@@ -191,10 +251,22 @@ FieldId PlotfileDataset::addDerivedField(
     }
 
     auto derived = std::make_shared<DerivedField>();
-    auto [parserExpression, aliases] =
+    auto aliased =
         aliasDashedFieldNames(definition.expression, m_metadata->fields);
-    derived->expression = std::make_shared<const CompiledExpression>(
-        CompiledExpression::compile(parserExpression));
+    try {
+        derived->expression = std::make_shared<const CompiledExpression>(
+            CompiledExpression::compile(aliased.parserExpression));
+    } catch (const ExpressionError& error) {
+        auto message = std::string(error.what());
+        const auto offsetSuffix =
+            " at byte " + std::to_string(error.offset());
+        if (message.ends_with(offsetSuffix)) {
+            message.erase(message.size() - offsetSuffix.size());
+        }
+        const auto mappedOffset = aliased.sourceOffsets[
+            std::min(error.offset(), aliased.sourceOffsets.size() - 1)];
+        throw ExpressionError(std::move(message), mappedOffset);
+    }
 
     const auto symbols = derived->expression->symbols();
     if (symbols.size() > maximumDerivedInputs) {
@@ -205,12 +277,12 @@ FieldId PlotfileDataset::addDerivedField(
     derived->inputs.reserve(symbols.size());
     for (const auto& symbol : symbols) {
         const auto alias = std::find_if(
-            aliases.begin(), aliases.end(),
+            aliased.aliases.begin(), aliased.aliases.end(),
             [&symbol](const ParserFieldAlias& candidate) {
                 return candidate.parserName == symbol;
             });
         const auto& fieldName =
-            alias == aliases.end() ? symbol : alias->fieldName;
+            alias == aliased.aliases.end() ? symbol : alias->fieldName;
         const auto input = std::find_if(
             m_metadata->fields.begin(), m_metadata->fields.end(),
             [&fieldName](const FieldMetadata& field) {
@@ -337,7 +409,9 @@ BlockReadResult PlotfileDataset::readDerivedBlock(
 
     auto block = std::make_shared<FabBlock>();
     block->box = inputBlocks.empty()
-        ? level.blocks[static_cast<std::size_t>(request.gridIndex)].box
+        ? ghostGrownBox(
+            level.blocks[static_cast<std::size_t>(request.gridIndex)].box,
+            level.ghostWidth, m_metadata->dimension)
         : inputBlocks.front()->box;
     block->field = request.field;
     block->component = 0;

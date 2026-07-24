@@ -2,6 +2,9 @@
 #include <amrvis/io/PlotfileDataset.hpp>
 #include <amrvis/io/PlotfileMetadataReader.hpp>
 #include <amrvis/io/StandaloneMetadataReader.hpp>
+#if AMRVIS_ENABLE_DERIVED_FIELDS
+#include <amrvis/expression/Expression.hpp>
+#endif
 
 #include <array>
 #include <chrono>
@@ -49,7 +52,7 @@ int main()
         "0.0 1.0\n0.0 1.0\n"
         "Level_0/Cell\n");
     writeText(root / "Level_0" / "Cell_H",
-        "1\n1\n2\n0\n"
+        "1\n1\n2\n1\n"
         "(1 0\n((0,0) (1,1) (0,0))\n)\n"
         "1\nFabOnDisk: Cell_D_00000 0\n\n"
         "1,2\n1.0,10.0,\n\n"
@@ -57,9 +60,13 @@ int main()
 
     constexpr std::string_view fabHeader =
         "FAB ((8, (64 11 52 0 1 12 0 1023)),(8, (8 7 6 5 4 3 2 1)))"
-        "((0,0) (1,1) (0,0)) 2\n";
-    const std::array<double, 4> first{1.0, 2.0, 3.0, 4.0};
-    const std::array<double, 4> second{10.0, 20.0, 30.0, 40.0};
+        "((-1,-1) (2,2) (0,0)) 2\n";
+    const std::array<double, 16> first{
+        1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
+        9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0};
+    const std::array<double, 16> second{
+        10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0,
+        90.0, 100.0, 110.0, 120.0, 130.0, 140.0, 150.0, 160.0};
     {
         std::ofstream output(root / "Level_0" / "Cell_D_00000", std::ios::binary);
         require(static_cast<bool>(output), "could not create selective-read payload");
@@ -90,7 +97,8 @@ int main()
     require(result.block->values[0] == 10.0 && result.block->values[3] == 40.0,
         "selective component values mismatch");
     require(result.metrics.filesRead == 1, "selective read opened an unexpected payload count");
-    require(result.metrics.valuesRead == 4, "selective value accounting mismatch");
+    require(result.metrics.valuesRead == second.size(),
+        "selective value accounting mismatch");
     require(result.metrics.bytesRead == fabHeader.size() + sizeof(second),
         "selective byte accounting mismatch");
     require(result.metrics.bytesRead
@@ -168,6 +176,20 @@ int main()
             && differenceAccess.handle->values[3] == 36.0,
         "dashed field name was confused with subtraction");
 
+    const auto dashedDerived = dataset.addDerivedField({
+        .name = "derived-speed",
+        .expression = "first + 1"
+    });
+    const auto dashedDerivedChain = dataset.addDerivedField({
+        .name = "dashed_derived_chain",
+        .expression = "derived-speed + 1"
+    });
+    request.field = dashedDerivedChain;
+    const auto dashedDerivedAccess = dataset.requestBlock(request);
+    require(dataset.isDerivedField(dashedDerived)
+            && dashedDerivedAccess.handle->values[3] == 6.0,
+        "valid dashed derived-field name could not be chained");
+
     const auto chained = dataset.addDerivedField({
         .name = "scaled",
         .expression = "2*magnitude"
@@ -198,19 +220,49 @@ int main()
             && constantAccess.handle->values[2] == 3.5,
         "constant derived field did not cover the grid cells");
 
+    const auto constantChained = dataset.addDerivedField({
+        .name = "constant_chained",
+        .expression = "constant + first"
+    });
+    request.field = constantChained;
+    const auto constantChainedAccess = dataset.requestBlock(request);
+    require(constantChainedAccess.handle->values.size() == first.size()
+            && constantChainedAccess.handle->values[15] == 19.5,
+        "constant derived field did not preserve ghost cells when chained");
+
+    constexpr std::string_view dashedSyntaxError = "second-field + )";
     const auto fieldCountBeforeSyntaxError = dataset.metadata().fields.size();
     bool syntaxErrorRejected = false;
     try {
         [[maybe_unused]] const auto ignored = dataset.addDerivedField({
             .name = "syntax_error",
-            .expression = "first^2"
+            .expression = std::string(dashedSyntaxError)
         });
-    } catch (const std::invalid_argument&) {
+    } catch (const amrvis::ExpressionError& error) {
         syntaxErrorRejected = true;
+        require(error.offset() == dashedSyntaxError.find(')'),
+            "dashed-field alias changed the reported syntax-error offset");
     }
     require(syntaxErrorRejected, "unsupported parser syntax was accepted");
     require(dataset.metadata().fields.size() == fieldCountBeforeSyntaxError,
         "syntax error changed dataset metadata");
+
+    for (const auto* invalidName : {"2speed", "my speed", "sqrt(x)"}) {
+        const auto fieldCountBeforeInvalidName = dataset.metadata().fields.size();
+        bool invalidNameRejected = false;
+        try {
+            [[maybe_unused]] const auto ignored = dataset.addDerivedField({
+                .name = invalidName,
+                .expression = "first"
+            });
+        } catch (const std::invalid_argument&) {
+            invalidNameRejected = true;
+        }
+        require(invalidNameRejected,
+            "unreferenceable derived-field name was accepted");
+        require(dataset.metadata().fields.size() == fieldCountBeforeInvalidName,
+            "invalid derived-field name changed dataset metadata");
+    }
 
     while (dataset.metadata().fields.size() < 17) {
         const auto suffix = dataset.metadata().fields.size();
