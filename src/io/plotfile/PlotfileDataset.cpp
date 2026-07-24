@@ -27,7 +27,7 @@ std::uint64_t residentBytes(const FabBlock& block)
         + block.values.residentBytes();
 }
 
-std::filesystem::path dataRoot(const std::filesystem::path& path)
+std::filesystem::path sourceDataRoot(const std::filesystem::path& path)
 {
     if (std::filesystem::is_directory(path)
         && std::filesystem::is_regular_file(path / "Header")) {
@@ -35,6 +35,16 @@ std::filesystem::path dataRoot(const std::filesystem::path& path)
     }
     const auto parent = path.parent_path();
     return parent.empty() ? std::filesystem::path(".") : parent;
+}
+
+std::shared_ptr<DatasetMetadata> mutableMetadata(
+    const PlotfileMetadataResult& result)
+{
+    if (!result.metadata) {
+        throw std::invalid_argument(
+            "selected FAB dataset requires metadata and an id");
+    }
+    return std::make_shared<DatasetMetadata>(*result.metadata);
 }
 
 constexpr std::size_t maximumDerivedInputs = 16;
@@ -191,7 +201,7 @@ struct PlotfileDataset::DerivedField {
 
 PlotfileDataset::PlotfileDataset(
     std::filesystem::path plotfile, DatasetId id, std::uint64_t cacheBudgetBytes)
-    : m_plotfile(dataRoot(plotfile))
+    : m_plotfile(sourceDataRoot(plotfile))
     , m_id(id)
     , m_metadataResult(readDatasetMetadata(plotfile))
     , m_metadata(std::make_shared<DatasetMetadata>(*m_metadataResult.metadata))
@@ -201,6 +211,21 @@ PlotfileDataset::PlotfileDataset(
 {
     if (m_id.value == 0) {
         throw std::invalid_argument("PlotfileDataset id must be nonzero");
+    }
+}
+
+PlotfileDataset::PlotfileDataset(std::filesystem::path root, DatasetId id,
+    std::uint64_t cacheBudgetBytes, PlotfileMetadataResult metadata)
+    : m_plotfile(std::move(root))
+    , m_id(id)
+    , m_metadataResult(std::move(metadata))
+    , m_metadata(mutableMetadata(m_metadataResult))
+    , m_blockReader(m_plotfile, m_metadata)
+    , m_cache(cacheBudgetBytes)
+    , m_storedFieldCount(m_metadata->fields.size())
+{
+    if (m_id.value == 0) {
+        throw std::invalid_argument("selected FAB dataset requires metadata and an id");
     }
 }
 
@@ -217,6 +242,11 @@ const MetadataReadMetrics& PlotfileDataset::metadataReadMetrics() const noexcept
 DatasetId PlotfileDataset::id() const noexcept
 {
     return m_id;
+}
+
+const std::filesystem::path& PlotfileDataset::dataRoot() const noexcept
+{
+    return m_plotfile;
 }
 
 FieldId PlotfileDataset::addDerivedField(

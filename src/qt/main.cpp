@@ -1,4 +1,5 @@
 #include "MainWindow.hpp"
+#include "FabSelectorDock.hpp"
 
 #include <QAction>
 #include <QApplication>
@@ -9,16 +10,20 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QInputDialog>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QLoggingCategory>
+#include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
 #include <QStandardPaths>
+#include <QTableView>
 #include <QTextStream>
 #include <QTimer>
 
+#include <array>
 #include <filesystem>
 #include <string_view>
 #include <vector>
@@ -242,6 +247,181 @@ bool exerciseExpressionEditor(amrvis::qt::MainWindow& window)
         && fieldSelector->findText(QStringLiteral("triple-density")) < 0;
 }
 
+bool fabRangeSelectorMatches(const amrvis::qt::MainWindow& window)
+{
+    const auto* selector = window.findChild<QComboBox*>(
+        QStringLiteral("rangeModeSelector"));
+    if (selector == nullptr) {
+        return false;
+    }
+    const auto fileIndex = selector->findData(
+        static_cast<int>(amrvis::qt::RangeMode::File));
+    const auto levelIndex = selector->findData(
+        static_cast<int>(amrvis::qt::RangeMode::Level));
+    if (fileIndex < 0 || levelIndex < 0) {
+        return false;
+    }
+    const auto fileEnabled = selector->model()->flags(
+        selector->model()->index(fileIndex, 0)) & Qt::ItemIsEnabled;
+    const auto levelEnabled = selector->model()->flags(
+        selector->model()->index(levelIndex, 0)) & Qt::ItemIsEnabled;
+    return selector->currentData().toInt()
+            == static_cast<int>(amrvis::qt::RangeMode::File)
+        && static_cast<bool>(fileEnabled)
+        && !static_cast<bool>(levelEnabled);
+}
+
+bool fabSelectorIsAscending(const amrvis::qt::FabSelectorDock& selector)
+{
+    const auto* table = selector.findChild<QTableView*>(
+        QStringLiteral("fabSelectorTable"));
+    if (table == nullptr || table->model() == nullptr) {
+        return false;
+    }
+    qulonglong previous = 0;
+    for (int row = 0; row < table->model()->rowCount(); ++row) {
+        const auto grid = table->model()->index(row, 0).data().toULongLong();
+        if (row != 0 && grid < previous) {
+            return false;
+        }
+        previous = grid;
+    }
+    return true;
+}
+
+bool fabSelectorColumnsMatch(
+    const amrvis::qt::FabSelectorDock& selector, bool viewingMultiFab)
+{
+    const auto* table = selector.findChild<QTableView*>(
+        QStringLiteral("fabSelectorTable"));
+    if (table == nullptr || table->model() == nullptr
+        || table->model()->columnCount() != 7) {
+        return false;
+    }
+    const std::array<QString, 7> expected{
+        QStringLiteral("Grid"),
+        QStringLiteral("Valid box"),
+        QStringLiteral("FAB Box"),
+        QStringLiteral("Components"),
+        QStringLiteral("File"),
+        QStringLiteral("Offset"),
+        QStringLiteral("Precision")
+    };
+    for (int column = 0; column < table->model()->columnCount(); ++column) {
+        if (table->model()->headerData(
+                column, Qt::Horizontal, Qt::DisplayRole).toString()
+            != expected[static_cast<std::size_t>(column)]) {
+            return false;
+        }
+    }
+    return table->isColumnHidden(1) != viewingMultiFab;
+}
+
+bool fabSelectorPointFilterMatches(
+    amrvis::qt::FabSelectorDock& selector, bool exercisePrompt)
+{
+    auto* filter = selector.findChild<QLineEdit*>(
+        QStringLiteral("fabSelectorFilter"));
+    auto* clear = selector.findChild<QPushButton*>(
+        QStringLiteral("fabSelectorClearFilter"));
+    const auto* table = selector.findChild<QTableView*>(
+        QStringLiteral("fabSelectorTable"));
+    const auto& entries = selector.entries();
+    if (filter == nullptr || clear == nullptr || table == nullptr
+        || table->model() == nullptr || entries.empty()) {
+        return false;
+    }
+
+    const auto dimension = entries.front().dimension;
+    const auto expectedExample = dimension == 1
+        ? QStringLiteral("(34)")
+        : dimension == 2
+            ? QStringLiteral("(34,24)")
+            : QStringLiteral("(34,24,0)");
+    if (!filter->isReadOnly()
+        || filter->placeholderText()
+            != QStringLiteral("Filter int tuple (e.g., %1)")
+                .arg(expectedExample)) {
+        return false;
+    }
+    if (!exercisePrompt) {
+        return true;
+    }
+
+    const auto& first = entries.front();
+    const auto& targetBox = first.storedBox;
+    QString tuple = QStringLiteral("(");
+    for (int axis = 0; axis < dimension; ++axis) {
+        if (axis != 0) {
+            tuple += QLatin1Char(',');
+        }
+        tuple += QString::number(
+            targetBox.lower[static_cast<std::size_t>(axis)]);
+    }
+    tuple += QLatin1Char(')');
+
+    int expectedRows = 0;
+    for (const auto& entry : entries) {
+        const auto& box = entry.storedBox;
+        bool contains = true;
+        for (int axis = 0; axis < dimension; ++axis) {
+            const auto index = static_cast<std::size_t>(axis);
+            contains = contains
+                && targetBox.lower[index] >= box.lower[index]
+                && targetBox.lower[index] <= box.upper[index];
+        }
+        expectedRows += contains ? 1 : 0;
+    }
+
+    if (expectedRows != 1) {
+        return false;
+    }
+
+    bool promptOpened = false;
+    QTimer::singleShot(0, &selector, [&promptOpened, tuple] {
+        auto* dialog = qobject_cast<QInputDialog*>(
+            QApplication::activeModalWidget());
+        if (dialog != nullptr) {
+            promptOpened = true;
+            dialog->setTextValue(tuple);
+            dialog->accept();
+        }
+    });
+    QTimer::singleShot(100, [] {
+        if (auto* dialog = QApplication::activeModalWidget()) {
+            dialog->close();
+        }
+    });
+    const QPointF localPosition(1.0, 1.0);
+    QMouseEvent click(
+        QEvent::MouseButtonRelease, localPosition,
+        filter->mapToGlobal(localPosition.toPoint()),
+        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(filter, &click);
+    return
+        promptOpened && filter->text() == tuple
+        && table->model()->rowCount() == expectedRows && !clear->isHidden();
+}
+
+bool clearFabSelectorPointFilter(amrvis::qt::FabSelectorDock& selector)
+{
+    auto* filter = selector.findChild<QLineEdit*>(
+        QStringLiteral("fabSelectorFilter"));
+    auto* clear = selector.findChild<QPushButton*>(
+        QStringLiteral("fabSelectorClearFilter"));
+    const auto* table = selector.findChild<QTableView*>(
+        QStringLiteral("fabSelectorTable"));
+    if (filter == nullptr || clear == nullptr || table == nullptr
+        || table->model() == nullptr || filter->text().isEmpty()
+        || clear->isHidden()) {
+        return false;
+    }
+    clear->click();
+    return filter->text().isEmpty() && clear->isHidden()
+        && table->model()->rowCount()
+            == static_cast<int>(selector.entries().size());
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -296,7 +476,7 @@ int main(int argc, char* argv[])
                 const auto valid = success
                     && rangeSelectorMatches(window, true);
                 application.exit(valid ? 0 : 1);
-            });
+        });
         QTimer::singleShot(0, &window, [&window, path] { window.openDataset(path); });
     } else if (argc == 3
         && std::string_view(argv[1]) == "--expression-editor-smoke-test") {
@@ -305,6 +485,70 @@ int main(int argc, char* argv[])
             &application, [&window, &application](bool success) {
                 const auto valid = success && exerciseExpressionEditor(window);
                 application.exit(valid ? 0 : 1);
+            });
+        QTimer::singleShot(0, &window,
+            [&window, path] { window.openDataset(path); });
+    } else if (argc == 3
+        && std::string_view(argv[1]) == "--raw-fab-smoke-test") {
+        const std::filesystem::path path(argv[2]);
+        int phase = 0;
+        QObject::connect(&window, &amrvis::qt::MainWindow::initialSliceFinished,
+            &application, [&window, &application, &phase](bool success) {
+                auto* selector =
+                    window.findChild<amrvis::qt::FabSelectorDock*>();
+                const auto valid = success && selector != nullptr
+                    && selector->isVisible() && selector->entries().size() >= 2
+                    && fabSelectorIsAscending(*selector)
+                    && fabSelectorColumnsMatch(*selector, false)
+                    && fabSelectorPointFilterMatches(*selector, phase == 0)
+                    && fabRangeSelectorMatches(window);
+                if (!valid) {
+                    application.exit(1);
+                } else if (phase++ == 0) {
+                    // The unique point match starts the FAB load.
+                } else {
+                    application.exit(
+                        clearFabSelectorPointFilter(*selector) ? 0 : 1);
+                }
+            });
+        QTimer::singleShot(0, &window,
+            [&window, path] { window.openDataset(path); });
+    } else if (argc == 3
+        && std::string_view(argv[1]) == "--multifab-fab-smoke-test") {
+        const std::filesystem::path path(argv[2]);
+        int phase = 0;
+        QObject::connect(&window, &amrvis::qt::MainWindow::initialSliceFinished,
+            &application, [&window, &application, &phase](bool success) {
+                auto* selector =
+                    window.findChild<amrvis::qt::FabSelectorDock*>();
+                if (!success || selector == nullptr
+                    || selector->entries().size() < 2
+                    || !fabSelectorIsAscending(*selector)
+                    || !fabSelectorColumnsMatch(*selector, true)
+                    || !fabSelectorPointFilterMatches(
+                        *selector, phase == 0)) {
+                    application.exit(1);
+                    return;
+                }
+                if (phase == 0) {
+                    ++phase;
+                } else if (phase == 1) {
+                    auto* back = selector->findChild<QPushButton*>(
+                        QStringLiteral("fabBackButton"));
+                    if (back == nullptr || !back->isVisible()
+                        || !fabRangeSelectorMatches(window)
+                        || !clearFabSelectorPointFilter(*selector)) {
+                        application.exit(1);
+                        return;
+                    }
+                    ++phase;
+                    QTimer::singleShot(0, back, &QPushButton::click);
+                } else {
+                    const auto* back = selector->findChild<QPushButton*>(
+                        QStringLiteral("fabBackButton"));
+                    application.exit(
+                        back != nullptr && !back->isVisible() ? 0 : 1);
+                }
             });
         QTimer::singleShot(0, &window,
             [&window, path] { window.openDataset(path); });

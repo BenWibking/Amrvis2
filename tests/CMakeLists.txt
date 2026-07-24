@@ -75,6 +75,10 @@ add_executable(test_selective_block_read integration/test_selective_block_read.c
 target_link_libraries(test_selective_block_read PRIVATE Amrvis::io Amrvis::warnings)
 add_test(NAME selective_block_read COMMAND test_selective_block_read)
 
+add_executable(test_fab_catalog integration/test_fab_catalog.cpp)
+target_link_libraries(test_fab_catalog PRIVATE Amrvis::query Amrvis::warnings)
+add_test(NAME fab_catalog COMMAND test_fab_catalog)
+
 add_executable(
     test_single_precision_plotfile
     integration/test_single_precision_plotfile.cpp
@@ -145,6 +149,24 @@ if(TARGET amrvis_qt)
             "$<TARGET_FILE:test_scientific_double_spin_box>"
     )
 
+    add_executable(test_line_plot_hover
+        unit/test_line_plot_hover.cpp
+        "${PROJECT_SOURCE_DIR}/src/qt/LinePlotWindow.cpp"
+        "${PROJECT_SOURCE_DIR}/src/qt/NumberFormat.cpp"
+    )
+    set_target_properties(test_line_plot_hover PROPERTIES AUTOMOC ON)
+    target_include_directories(test_line_plot_hover
+        PRIVATE "${PROJECT_SOURCE_DIR}/src/qt"
+    )
+    target_link_libraries(test_line_plot_hover
+        PRIVATE Amrvis::core Amrvis::warnings Qt6::Widgets
+    )
+    add_test(
+        NAME line_plot_hover
+        COMMAND "${CMAKE_COMMAND}" -E env QT_QPA_PLATFORM=offscreen
+            "$<TARGET_FILE:test_line_plot_hover>"
+    )
+
     add_test(
         NAME qt_metadata_smoke
         COMMAND "${CMAKE_COMMAND}" -E env QT_QPA_PLATFORM=offscreen
@@ -205,6 +227,39 @@ if(TARGET amrvis_qt)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/qt_smoke_driver.cmake"
     )
     set_tests_properties(qt_multifab_missing_range PROPERTIES TIMEOUT 30)
+    add_test(
+        NAME qt_multifab_non_finite
+        COMMAND "${CMAKE_COMMAND}"
+            "-DMATERIALIZER=$<TARGET_FILE:fixture_materializer>"
+            "-DAMRVIS_QT=$<TARGET_FILE:amrvis_qt>"
+            "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/data/plotfile_2d"
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/fixtures_non_finite"
+            -DMODE=non-finite
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/qt_smoke_driver.cmake"
+    )
+    set_tests_properties(qt_multifab_non_finite PROPERTIES TIMEOUT 30)
+    add_test(
+        NAME qt_raw_fab_selector
+        COMMAND "${CMAKE_COMMAND}"
+            "-DMATERIALIZER=$<TARGET_FILE:fixture_materializer>"
+            "-DAMRVIS_QT=$<TARGET_FILE:amrvis_qt>"
+            "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/data/plotfile_2d"
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/fixtures_raw_fab"
+            -DMODE=raw-fab
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/qt_smoke_driver.cmake"
+    )
+    set_tests_properties(qt_raw_fab_selector PROPERTIES TIMEOUT 30)
+    add_test(
+        NAME qt_multifab_fab_mode
+        COMMAND "${CMAKE_COMMAND}"
+            "-DMATERIALIZER=$<TARGET_FILE:fixture_materializer>"
+            "-DAMRVIS_QT=$<TARGET_FILE:amrvis_qt>"
+            "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/data/plotfile_2d"
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/fixtures_multifab_fab"
+            -DMODE=multifab-fab
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/qt_smoke_driver.cmake"
+    )
+    set_tests_properties(qt_multifab_fab_mode PROPERTIES TIMEOUT 30)
     add_test(
         NAME qt_sequence_smoke
         COMMAND "${CMAKE_COMMAND}"

@@ -31,10 +31,13 @@ public:
 
     PlotfileDataset(
         std::filesystem::path plotfile, DatasetId id, std::uint64_t cacheBudgetBytes);
+    PlotfileDataset(std::filesystem::path dataRoot, DatasetId id,
+        std::uint64_t cacheBudgetBytes, PlotfileMetadataResult metadata);
 
     [[nodiscard]] const DatasetMetadata& metadata() const noexcept;
     [[nodiscard]] const MetadataReadMetrics& metadataReadMetrics() const noexcept;
     [[nodiscard]] DatasetId id() const noexcept;
+    [[nodiscard]] const std::filesystem::path& dataRoot() const noexcept;
 
     // Adds a scalar, cell-centered field whose algebraic expression may
     // reference existing scalar fields by name. The returned id is immediately
