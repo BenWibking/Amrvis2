@@ -64,6 +64,7 @@ class ImageView;
 class IsoWidget;
 class LinePlotWindow;
 class ScientificDoubleSpinBox;
+class UserGuideDialog;
 
 enum class RangeMode {
     Visible,
@@ -123,7 +124,7 @@ struct FrameSliceSpec {
     DisplayMode displayMode = DisplayMode::Raster;
     std::uint32_t field = 0;
     int levelSelection = -1;  // level combo data: -1 = finest available
-    RangeMode rangeMode = RangeMode::Visible;
+    RangeMode rangeMode = RangeMode::File;
     std::optional<std::pair<double, double>> userRange;
     bool logarithmic = false;
     Palette palette;
@@ -256,6 +257,7 @@ private:
     void applyFieldRange(std::uint32_t field);
     void resetRangeState();
     void showAddDerivedFieldDialog();
+    void updateRangeModeAvailability();
     void showContoursDialog();
     void applyContourSettings(DisplayMode mode, int count, int uField, int vField,
         int wField, int contourColor);
@@ -268,6 +270,7 @@ private:
     void refreshDatasetWindow();
     void datasetCellActivated(const RealBox& physicalCell);
     [[nodiscard]] std::optional<DatasetRequest> buildDatasetRequest() const;
+    void showUserGuide();
     void showKeyboardMouseReference();
     void showAboutDialog();
     void showMetadata(const PlotfileMetadataResult& result, const std::filesystem::path& path);
@@ -381,6 +384,7 @@ private:
     DatasetWindow* m_datasetWindow = nullptr;
     SetContoursDialog* m_contoursDialog = nullptr;
     QDialog* m_numberFormatDialog = nullptr;
+    UserGuideDialog* m_userGuideDialog = nullptr;
     QComboBox* m_fieldSelector = nullptr;
     QComboBox* m_levelSelector = nullptr;
     QComboBox* m_rangeMode = nullptr;
