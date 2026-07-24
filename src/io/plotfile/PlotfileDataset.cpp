@@ -1,9 +1,7 @@
 #include <amrvis/io/PlotfileDataset.hpp>
 #include <amrvis/io/StandaloneMetadataReader.hpp>
 
-#if AMRVIS_ENABLE_DERIVED_FIELDS
 #include <amrvis/expression/Expression.hpp>
-#endif
 
 #include <algorithm>
 #include <cstddef>
@@ -38,8 +36,6 @@ std::filesystem::path dataRoot(const std::filesystem::path& path)
     const auto parent = path.parent_path();
     return parent.empty() ? std::filesystem::path(".") : parent;
 }
-
-#if AMRVIS_ENABLE_DERIVED_FIELDS
 
 constexpr std::size_t maximumDerivedInputs = 16;
 
@@ -186,15 +182,11 @@ std::uint64_t pointCount(const IntBox& box, int dimension)
     return result;
 }
 
-#endif
-
 } // namespace
 
 struct PlotfileDataset::DerivedField {
-#if AMRVIS_ENABLE_DERIVED_FIELDS
     std::vector<FieldId> inputs;
     std::shared_ptr<const CompiledExpression> expression;
-#endif
 };
 
 PlotfileDataset::PlotfileDataset(
@@ -230,7 +222,6 @@ DatasetId PlotfileDataset::id() const noexcept
 FieldId PlotfileDataset::addDerivedField(
     const DerivedFieldDefinition& definition)
 {
-#if AMRVIS_ENABLE_DERIVED_FIELDS
     if (!isReferenceableFieldName(definition.name)) {
         throw std::invalid_argument(
             "derived-field name must match "
@@ -320,22 +311,12 @@ FieldId PlotfileDataset::addDerivedField(
     });
     m_derivedFields.push_back(std::move(derived));
     return id;
-#else
-    static_cast<void>(definition);
-    throw std::logic_error(
-        "derived fields are unavailable in this build");
-#endif
 }
 
 bool PlotfileDataset::isDerivedField(FieldId field) const noexcept
 {
-#if AMRVIS_ENABLE_DERIVED_FIELDS
     return field.value >= m_storedFieldCount
         && static_cast<std::size_t>(field.value) < m_metadata->fields.size();
-#else
-    static_cast<void>(field);
-    return false;
-#endif
 }
 
 PlotfileDataset::BlockAccess PlotfileDataset::requestBlock(
@@ -380,7 +361,6 @@ BlockReadResult PlotfileDataset::readDerivedBlock(
     const BlockRequest& request, const DerivedField& field,
     StopToken cancellation)
 {
-#if AMRVIS_ENABLE_DERIVED_FIELDS
     if (request.componentCount != 1 || request.firstComponent != 0) {
         throw BlockReadError("derived fields are scalar");
     }
@@ -441,12 +421,6 @@ BlockReadResult PlotfileDataset::readDerivedBlock(
     }
     block->values = FabValues{std::move(values)};
     return {std::shared_ptr<const FabBlock>(std::move(block)), metrics};
-#else
-    static_cast<void>(request);
-    static_cast<void>(field);
-    static_cast<void>(cancellation);
-    throw BlockReadError("derived fields are unavailable in this build");
-#endif
 }
 
 CacheMetrics PlotfileDataset::cacheMetrics() const

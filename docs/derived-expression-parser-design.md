@@ -183,19 +183,17 @@ This is the existing behavior and must have an explicit regression test.
 
 ### Component boundary
 
-The parser will live in an independent, non-Qt library:
+The parser implementation is another translation unit in the I/O target:
 
 ```text
 include/amrvis/expression/Expression.hpp
-src/expression/CMakeLists.txt
 src/expression/Expression.cpp
 ```
 
-The target will be named `Amrvis::expression`. `Amrvis::io` will depend on
-it privately. Keeping the component independent of plotfile metadata makes
-the grammar and evaluator directly unit-testable; dashed-name rewriting and
-field-ID binding remain in the plotfile dataset layer because they require
-dataset metadata.
+There is no separate parser library or feature switch. Keeping the parser API
+independent of plotfile metadata makes the grammar and evaluator directly
+unit-testable; dashed-name rewriting and field-ID binding remain in the
+plotfile dataset layer because they require dataset metadata.
 
 The public expression API will have this conceptual shape:
 
@@ -345,13 +343,9 @@ The implementation will:
 - Remove the `FetchContent` declaration for `amrex-parser`.
 - Remove the `AMRVIS_USE_SYSTEM_AMREXPR` option and installed-package path.
 - Remove the `amrexpr::amrexpr` link and include-directory handling.
-- Add and link the internal `Amrvis::expression` target.
+- Compile `src/expression/Expression.cpp` as part of `Amrvis::io`.
 - Remove `amrex-parser` instructions from `INSTALL.md`.
-
-`AMRVIS_ENABLE_DERIVED_FIELDS` will remain during this change. Retaining the
-feature option keeps the migration focused and avoids unnecessarily breaking
-packager configurations. Whether a dependency-free derived-field feature
-still needs a build-time switch can be decided separately.
+- Remove `AMRVIS_ENABLE_DERIVED_FIELDS`; the built-in feature is unconditional.
 
 The new parser will be written against the language contract in this
 document rather than copied from `amrex-parser`. No third-party parser source
@@ -448,30 +442,26 @@ Validation must include:
 
 - A normal Qt build and the full test suite.
 - A headless build and the full headless test suite.
-- A build with `AMRVIS_ENABLE_DERIVED_FIELDS=OFF`.
 - Configuration without network access, demonstrating that derived fields
   no longer trigger dependency downloads.
 - `git diff --check`.
 
 ## Implementation sequence
 
-1. Add the independent expression target, parser, bytecode evaluator, and
-   parser unit tests.
+1. Add the expression parser, bytecode evaluator, and parser unit tests.
 2. Replace `amrexpr::Parser` ownership and the templated evaluator ladder in
    `PlotfileDataset` with `CompiledExpression`.
 3. Extend dataset integration tests before removing the external dependency.
 4. Update the dialog widget, examples, and help text.
 5. Remove `amrex-parser` CMake and installation documentation.
-6. Run the normal, headless, derived-fields-disabled, and offline validation
-   matrix.
+6. Run the normal, headless, and offline validation matrix.
 
 Keeping dependency removal until the new parser passes the existing
 integration tests makes the behavioral handoff explicit and reviewable.
 
 ## Review decisions
 
-- Retain `AMRVIS_ENABLE_DERIVED_FIELDS` temporarily. A later cleanup should
-  make the dependency-free feature unconditional.
+- Make the dependency-free derived-field feature unconditional.
 - Preserve the 16-input limit temporarily. A later compatibility cleanup
   should remove it from the index-based evaluator and dataset binding path.
 - Skip invalid derived fields restored from saved state and report each

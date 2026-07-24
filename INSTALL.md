@@ -52,9 +52,8 @@ cmake --preset default
 cmake --build --preset default
 ```
 
-Derived-field expressions use Amrvis2's built-in CPU parser and are enabled by
-default. Configure with `-DAMRVIS_ENABLE_DERIVED_FIELDS=OFF` to build without
-the feature.
+Derived-field expressions use Amrvis2's built-in CPU parser and are always
+available.
 
 On Linux, the executable is `build/src/qt/amrvis2`. Run it with a plotfile:
 

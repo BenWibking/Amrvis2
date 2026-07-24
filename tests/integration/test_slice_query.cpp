@@ -145,7 +145,6 @@ int main()
         "repeated slice did not reuse both blocks");
     require(cached.metrics.payloadBytesRead == 0, "cached slice performed payload I/O");
 
-#if AMRVIS_ENABLE_DERIVED_FIELDS
     const auto doubledField = dataset.addDerivedField({
         .name = "double_phi",
         .expression = "2*phi"
@@ -164,7 +163,6 @@ int main()
                 "derived field did not flow through the slice query");
         }
     }
-#endif
 
     request.composition = amrvis::CompositionPolicy::ExactLevel;
     const auto exact = query.execute(request);

@@ -2,9 +2,7 @@
 #include <amrvis/io/PlotfileDataset.hpp>
 #include <amrvis/io/PlotfileMetadataReader.hpp>
 #include <amrvis/io/StandaloneMetadataReader.hpp>
-#if AMRVIS_ENABLE_DERIVED_FIELDS
 #include <amrvis/expression/Expression.hpp>
-#endif
 
 #include <array>
 #include <chrono>
@@ -127,7 +125,6 @@ int main()
     require(secondAccess.handle->values[2] == 30.0, "cached block value mismatch");
     require(dataset.cacheMetrics().residentBytes > 0, "dataset cache did not account bytes");
 
-#if AMRVIS_ENABLE_DERIVED_FIELDS
     const auto derived = dataset.addDerivedField({
         .name = "magnitude",
         .expression = "sqrt(first**2 + second-field**2)"
@@ -300,7 +297,6 @@ int main()
     }
     require(tooManyInputsRejected,
         "derived expression with more than 16 inputs was accepted");
-#endif
 
     request.field.value = 1;
     amrvis::PlotfileDataset fabDataset(

@@ -1634,12 +1634,10 @@ void MainWindow::rebuildVariableMenu()
             }
         });
     }
-#if AMRVIS_ENABLE_DERIVED_FIELDS
     m_variableMenu->addSeparator();
     auto* addDerived = m_variableMenu->addAction(tr("&Add Derived Field..."));
     connect(addDerived, &QAction::triggered, this,
         [this] { showAddDerivedFieldDialog(); });
-#endif
 }
 
 void MainWindow::syncVariableMenu()

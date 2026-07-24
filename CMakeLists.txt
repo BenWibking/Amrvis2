@@ -15,8 +15,6 @@ option(AMRVIS_BUILD_MACOS_APP_BUNDLE
     "Build the Qt application as a macOS .app bundle" ${APPLE})
 option(AMRVIS_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(AMRVIS_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
-option(AMRVIS_ENABLE_DERIVED_FIELDS
-    "Enable derived-field expressions" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -63,9 +61,6 @@ if(AMRVIS_ENABLE_MPI)
 endif()
 
 add_subdirectory(src/core)
-if(AMRVIS_ENABLE_DERIVED_FIELDS)
-    add_subdirectory(src/expression)
-endif()
 add_subdirectory(src/cache)
 add_subdirectory(src/io)
 add_subdirectory(src/query)

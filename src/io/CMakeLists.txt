@@ -1,4 +1,5 @@
 add_library(amrvis_io
+    ../expression/Expression.cpp
     plotfile/PlotfileBlockReader.cpp
     plotfile/PlotfileDataset.cpp
     plotfile/PlotfileMetadataReader.cpp
@@ -15,9 +16,4 @@ target_link_libraries(amrvis_io
     PUBLIC Amrvis::cache Amrvis::core
     PRIVATE Amrvis::warnings
 )
-target_compile_definitions(amrvis_io
-    PUBLIC AMRVIS_ENABLE_DERIVED_FIELDS=$<BOOL:${AMRVIS_ENABLE_DERIVED_FIELDS}>)
-if(AMRVIS_ENABLE_DERIVED_FIELDS)
-    target_link_libraries(amrvis_io PRIVATE Amrvis::expression)
-endif()
 target_compile_features(amrvis_io PUBLIC cxx_std_20)
