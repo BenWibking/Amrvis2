@@ -163,6 +163,12 @@ table SliceViewRequest {
   height:int;
   sampling:SamplingPolicy;
   composition:CompositionPolicy;
+  include_grid_boxes:bool;
+}
+
+table SliceGridBox {
+  level:int;
+  physical_region:RealBox;
 }
 
 table SliceViewResponse {
@@ -172,6 +178,8 @@ table SliceViewResponse {
   values:[float];
   valid:[ubyte];
   source_level:[short];
+  grid_boxes_included:bool;
+  grid_boxes:[SliceGridBox];
   candidate_blocks:ulong;
   blocks_read:ulong;
   cache_hits:ulong;

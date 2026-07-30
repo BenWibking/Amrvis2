@@ -102,6 +102,10 @@ public:
     // user has not zoomed or set a fixed scale). Cleared by zoom/pan/scale.
     [[nodiscard]] bool isFitToWindow() const noexcept { return m_fitOnResize; }
     [[nodiscard]] const QImage& image() const noexcept;
+    [[nodiscard]] std::size_t gridBoxCount() const noexcept
+    {
+        return m_gridItems.size();
+    }
     [[nodiscard]] std::size_t pointOverlayCount() const noexcept;
     [[nodiscard]] const std::vector<QColor>& pointOverlayColors() const noexcept;
     // Renders the scene (base image plus grid boxes and any other overlays)

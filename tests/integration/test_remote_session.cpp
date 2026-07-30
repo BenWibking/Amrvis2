@@ -62,6 +62,7 @@ amrvis::SliceRequest sliceRequest(
             + request.visibleRegion.upper[normal]);
     request.maximumLevel = dataset.metadata().finestLevel;
     request.outputSize = {width, height};
+    request.includeGridBoxes = true;
     return request;
 }
 
@@ -104,6 +105,19 @@ int main(int argc, char* argv[])
         require(slice.plane.width == 8 && slice.plane.height == 6
                 && slice.plane.values.size() == 48,
             "remote slice did not honor the viewport extent");
+        require(slice.gridBoxesIncluded && !slice.gridBoxes.empty(),
+            "remote slice omitted view-local grid geometry");
+        for (const auto& box : slice.gridBoxes) {
+            require(box.physicalRegion.lower[0]
+                        >= slice.plane.physicalRegion.lower[0]
+                    && box.physicalRegion.upper[0]
+                        <= slice.plane.physicalRegion.upper[0]
+                    && box.physicalRegion.lower[1]
+                        >= slice.plane.physicalRegion.lower[1]
+                    && box.physicalRegion.upper[1]
+                        <= slice.plane.physicalRegion.upper[1],
+                "remote grid geometry escaped the requested viewport");
+        }
 
         amrvis::LineViewRequest line;
         line.query.dataset = dataset->id();

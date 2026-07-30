@@ -96,7 +96,8 @@ bool sameSliceSpec(const SliceRequest& lhs, const SliceRequest& rhs)
         && lhs.maximumLevel == rhs.maximumLevel
         && lhs.outputSize == rhs.outputSize
         && lhs.sampling == rhs.sampling
-        && lhs.composition == rhs.composition;
+        && lhs.composition == rhs.composition
+        && lhs.includeGridBoxes == rhs.includeGridBoxes;
 }
 
 std::array<int, 2> slicePlaneAxes(int dimension, int normalDirection)
@@ -587,6 +588,7 @@ InitialSliceResult executeSessionFrameLoad(
                 request.outputSize[1] = std::clamp(
                     request.outputSize[1], 1, maxSliceOutputDimension);
                 request.composition = selectedLevel.composition;
+                request.includeGridBoxes = spec.includeGridBoxes;
                 request.maximumLevel = attemptMaximumLevel;
                 request.sphericalSupersample = spec.sphericalSupersample;
                 request.sphericalDisplay = spec.sphericalDisplay;
