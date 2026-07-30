@@ -99,6 +99,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -1013,33 +1014,26 @@ std::array<int, 2> MainWindow::sliceOutputSize(
         && !std::dynamic_pointer_cast<remote::RemoteDatasetSession>(m_dataset)) {
         return nativeOutputSize(state);
     }
+    const auto viewportPixels = viewportPixelSize(state);
+    const auto target = state.visibleRegion.value_or(
+        datasetSampleBounds(*m_openMetadata));
+    return viewportBoundedOutputSize(
+        *m_openMetadata, target, state.normal, viewportPixels);
+}
+
+std::array<int, 2> MainWindow::viewportPixelSize(
+    const PlaneViewState& state) const
+{
     const auto* viewport = state.view == nullptr ? nullptr : state.view->viewport();
     if (viewport == nullptr || viewport->width() < 1 || viewport->height() < 1) {
         return {1, 1};
     }
     const auto scale = state.view->devicePixelRatioF();
-    const std::array<int, 2> viewportPixels{
+    return {
         std::clamp(static_cast<int>(std::lround(viewport->width() * scale)),
             1, maxSliceOutputDimension),
         std::clamp(static_cast<int>(std::lround(viewport->height() * scale)),
             1, maxSliceOutputDimension)};
-    const auto target = state.visibleRegion.value_or(
-        datasetSampleBounds(*m_openMetadata));
-    const auto axes = displayAxes(state.normal);
-    const auto extentX = target.upper[static_cast<std::size_t>(axes[0])]
-        - target.lower[static_cast<std::size_t>(axes[0])];
-    const auto extentY = target.upper[static_cast<std::size_t>(axes[1])]
-        - target.lower[static_cast<std::size_t>(axes[1])];
-    if (!(extentX > 0.0) || !(extentY > 0.0)) {
-        return {1, 1};
-    }
-    const auto fit = std::min(
-        static_cast<double>(viewportPixels[0]) / extentX,
-        static_cast<double>(viewportPixels[1]) / extentY);
-    return {std::clamp(static_cast<int>(std::lround(extentX * fit)),
-                1, viewportPixels[0]),
-        std::clamp(static_cast<int>(std::lround(extentY * fit)),
-            1, viewportPixels[1])};
 }
 
 bool MainWindow::displayIsSpherical() const
@@ -1156,6 +1150,32 @@ void MainWindow::createMenus()
             }
         });
 
+    auto* openRemoteSequenceAction = new QAction(
+        tr("Open Remote Plotfile &Sequence..."), this);
+    connect(openRemoteSequenceAction, &QAction::triggered, this,
+        [this, configureRemoteEndpoint] {
+            if (m_remotePort == 0 && !configureRemoteEndpoint()) {
+                return;
+            }
+            bool accepted = false;
+            const auto text = QInputDialog::getMultiLineText(this,
+                tr("Open Remote Plotfile Sequence"),
+                tr("Server-visible paths, one per line, in playback order:"),
+                QString(), &accepted);
+            if (!accepted) {
+                return;
+            }
+            std::vector<std::string> paths;
+            for (const auto& line : text.split(
+                     QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+                const auto path = line.trimmed();
+                if (!path.isEmpty()) {
+                    paths.push_back(path.toStdString());
+                }
+            }
+            openRemoteSequence(m_remoteHost, m_remotePort, paths);
+        });
+
     auto* openFabAction = new QAction(tr("Open &FAB..."), this);
     connect(openFabAction, &QAction::triggered, this,
         [this] { chooseStandaloneDataset(tr("Open AMReX FAB"), true); });
@@ -1212,6 +1232,7 @@ void MainWindow::createMenus()
     fileMenu->addSeparator();
     fileMenu->addAction(connectRemoteAction);
     fileMenu->addAction(openRemoteAction);
+    fileMenu->addAction(openRemoteSequenceAction);
     fileMenu->addSeparator();
     fileMenu->addAction(openFabAction);
     fileMenu->addAction(openMultiFabAction);
@@ -5793,12 +5814,80 @@ void MainWindow::openSequence(const std::vector<std::filesystem::path>& frames)
     m_sequenceController->open(std::move(sorted));
 }
 
+void MainWindow::openRemoteSequence(std::string host, std::uint16_t port,
+    const std::vector<std::string>& remotePaths)
+{
+    if (remotePaths.size() < 2
+        || std::any_of(remotePaths.begin(), remotePaths.end(),
+            [](const auto& path) { return path.empty(); })) {
+        emit sequenceFrameFailed();
+        QMessageBox::warning(this, tr("Cannot open remote sequence"),
+            tr("Enter two or more server-visible plotfile paths."));
+        return;
+    }
+
+    m_remoteHost = host;
+    m_remotePort = port;
+    setPlaybackMode(PlaybackMode::None);
+    closeSequence();
+    m_remoteSequence = true;
+    resetRangeState();
+    m_particleStopSource.request_stop();
+    m_particleSamples.clear();
+    m_selectedParticleSpecies.clear();
+    m_particleSelectionInitialized = false;
+    ++m_particleGeneration;
+
+    std::vector<std::filesystem::path> frames;
+    frames.reserve(remotePaths.size());
+    for (const auto& path : remotePaths) {
+        frames.emplace_back(path);
+    }
+    m_animationPanel->setSequenceFrameCount(
+        static_cast<int>(frames.size()));
+    m_animationPanel->setSequenceVisible(true);
+    updateAnimationDockVisibility();
+    auto* linePlotWindow = m_linePlotWindow;
+    m_linePlotWindow = nullptr;
+    if (linePlotWindow != nullptr) {
+        linePlotWindow->close();
+    }
+
+    struct SharedRemoteConnection {
+        std::mutex mutex;
+        std::shared_ptr<remote::Connection> connection;
+    };
+    auto shared = std::make_shared<SharedRemoteConnection>();
+    auto loader = [shared, host = std::move(host), port](
+                      const std::filesystem::path& path, DatasetId,
+                      const FrameSliceSpec& spec, StopToken cancellation) {
+        std::shared_ptr<remote::Connection> connection;
+        {
+            std::scoped_lock lock(shared->mutex);
+            if (!shared->connection || !shared->connection->connected()) {
+                shared->connection = std::make_shared<remote::Connection>(
+                    host, port, remote::ConnectionOptions{
+                        .clientName = "AMReXplorer Qt sequence",
+                        .softwareVersion = AMREXPLORER_VERSION});
+            }
+            connection = shared->connection;
+        }
+        auto session = remote::RemoteDatasetSession::open(
+            std::move(connection), path.string(), initialCacheBudget(),
+            cancellation);
+        return executeSessionFrameLoad(
+            std::move(session), spec, cancellation);
+    };
+    m_sequenceController->open(std::move(frames), std::move(loader));
+}
+
 void MainWindow::closeSequence()
 {
     if (m_playbackMode == PlaybackMode::Sequence) {
         setPlaybackMode(PlaybackMode::None);
     }
     m_sequenceController->close();
+    m_remoteSequence = false;
     m_animationPanel->setSequenceVisible(false);
     updateAnimationDockVisibility();
 }
@@ -6070,8 +6159,15 @@ FrameSliceSpec MainWindow::buildFrameSpec()
     spec.particleSeed = m_particleSeed;
     const auto views = currentViews();
     spec.visibleRegions.reserve(views.size());
+    if (m_remoteSequence) {
+        spec.outputSizesAreViewportBounds = true;
+        spec.outputSizes.reserve(views.size());
+    }
     for (const auto* state : views) {
         spec.visibleRegions.push_back(state->visibleRegion);
+        if (m_remoteSequence) {
+            spec.outputSizes.push_back(viewportPixelSize(*state));
+        }
     }
     return spec;
 }
