@@ -2,6 +2,7 @@
 
 #include <QAbstractButton>
 #include <QButtonGroup>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -141,6 +142,11 @@ SetContoursDialog::SetContoursDialog(const std::vector<std::string>& fieldNames,
         }
         vectorLayout->addRow(tr("W field:"), m_wField);
     }
+    m_uniformVectorGlyphSize = new QCheckBox(
+        tr("Uniform glyph size (direction only)"), m_vectorBox);
+    m_uniformVectorGlyphSize->setToolTip(tr(
+        "Normalize every nonzero vector so glyphs show direction without magnitude."));
+    vectorLayout->addRow(m_uniformVectorGlyphSize);
     auto* vectorWarning = new QLabel(
         tr("U and V fields must be different"), m_vectorBox);
     vectorWarning->setStyleSheet("QLabel { color: red; }");
@@ -217,6 +223,11 @@ void SetContoursDialog::setVectorFields(int uField, int vField, int wField)
     }
 }
 
+void SetContoursDialog::setUniformVectorGlyphSize(bool uniform)
+{
+    m_uniformVectorGlyphSize->setChecked(uniform);
+}
+
 DisplayMode SetContoursDialog::mode() const
 {
     return m_mode;
@@ -240,6 +251,11 @@ int SetContoursDialog::vField() const
 int SetContoursDialog::wField() const
 {
     return m_wField != nullptr ? m_wField->currentIndex() : 0;
+}
+
+bool SetContoursDialog::uniformVectorGlyphSize() const
+{
+    return m_uniformVectorGlyphSize->isChecked();
 }
 
 void SetContoursDialog::setContourColor(int color)

@@ -111,6 +111,34 @@ int main()
     require(mixed.size() == 3,
         "exact-zero filtering did not suppress only the zero vector");
 
+    // Direction-only mode normalizes each sampled vector independently. The
+    // legacy/default mode still encodes the 1:5 speed ratio in shaft length;
+    // uniform mode gives both nonzero vectors the same full-length shaft while
+    // preserving their directions.
+    {
+        auto varyingU = makePlane(2, 1, 1.0F);
+        auto varyingV = makePlane(2, 1, 0.0F);
+        varyingU.values[1] = 3.0F;
+        varyingV.values[1] = 4.0F;
+        const auto scaled = amrvis::generateVectorGlyphs(
+            varyingU, varyingV, 2);
+        const auto uniform = amrvis::generateVectorGlyphs(
+            varyingU, varyingV, 2, true);
+        const auto shaftLength = [](const amrvis::VectorSegment& shaft) {
+            return std::hypot(shaft.x1 - shaft.x0, shaft.y1 - shaft.y0);
+        };
+        require(nearlyEqual(shaftLength(scaled[0]), 0.25F)
+                && nearlyEqual(shaftLength(scaled[3]), 1.25F),
+            "default glyph scaling no longer represents vector magnitude");
+        require(nearlyEqual(shaftLength(uniform[0]), 1.25F)
+                && nearlyEqual(shaftLength(uniform[3]), 1.25F),
+            "direction-only glyphs do not have uniform shaft lengths");
+        require(nearlyEqual(uniform[0].y1 - uniform[0].y0, 0.0F)
+                && nearlyEqual(uniform[3].x1 - uniform[3].x0, 0.75F)
+                && nearlyEqual(uniform[3].y1 - uniform[3].y0, 1.0F),
+            "direction-only normalization changed vector directions");
+    }
+
     // count > longestSide used to give sight = 0 (integer division) and thus
     // zero glyphs; floating-point division keeps sight nonzero. stride is
     // floor(8/10) clamped to 1, so every one of the 8x8 = 64 cells draws an
@@ -251,6 +279,31 @@ int main()
             require(nearlyEqual(arrows[0].y0, 1.5F, 1.0e-4F)
                     && nearlyEqual(arrows[3].y0, 2.5F, 1.0e-4F),
                 "arrows are not anchored at their sample radii");
+        }
+
+        // Direction-only normalization applies after rotating to R-Z display
+        // coordinates as well: unequal radial speeds produce equal lengths.
+        {
+            auto u = makePlane(2, 1, 1.0F);
+            auto v = makePlane(2, 1, 0.0F);
+            u.values[1] = 4.0F;
+            const auto region = logicalBox(1.0, 3.0, 0.0, 1.0e-6);
+            u.physicalRegion = region;
+            v.physicalRegion = region;
+            const auto display = amrvis::sphericalDisplayBounds(region);
+            const auto scaled = amrvis::generateSphericalRZVectorGlyphs(
+                u, v, 2, display);
+            const auto uniform = amrvis::generateSphericalRZVectorGlyphs(
+                u, v, 2, display, true);
+            const auto length = [](const amrvis::VectorSegment& shaft) {
+                return std::hypot(shaft.x1 - shaft.x0, shaft.y1 - shaft.y0);
+            };
+            require(nearlyEqual(static_cast<float>(
+                        length(scaled[0]) / length(scaled[3])), 0.25F, 1.0e-4F),
+                "spherical default glyph scaling lost vector magnitude");
+            require(nearlyEqual(static_cast<float>(
+                        length(uniform[0]) / length(uniform[3])), 1.0F, 1.0e-4F),
+                "spherical direction-only glyph lengths are not uniform");
         }
 
         // At theta ~ pi/2 (the equator), pure v_r points along +R and pure

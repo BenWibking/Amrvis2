@@ -589,6 +589,7 @@ void MainWindow::requestSlice(PlaneViewState& state, bool rasterDirty)
     const auto vectorVField = (metadata.dimension == 3)
         ? (state.normal == 2 ? v : w) : v;
     const auto contourCount = m_contourCount;
+    const auto uniformVectorGlyphSize = m_uniformVectorGlyphSize;
 
     const auto fromCache = state.hasCachedRequest
         && state.plane->width > 0
@@ -600,6 +601,8 @@ void MainWindow::requestSlice(PlaneViewState& state, bool rasterDirty)
         && (displayMode != DisplayMode::VelocityVectors
             || (!state.vectorSegments.empty()
                 && contourCount == state.cachedContourCount
+                && uniformVectorGlyphSize
+                    == state.cachedUniformVectorGlyphSize
                 // Cached glyphs are layout-specific for a spherical dataset:
                 // R-Z segments carry display (R, Z) coordinates while the
                 // logical layouts carry plane pixels, so a display-mode switch
@@ -647,23 +650,25 @@ void MainWindow::requestSlice(PlaneViewState& state, bool rasterDirty)
             vectors = state.vectorSegments,
             rangeMode, userRange, scale, palette, displayMode,
             vectorUField, vectorVField, contourCount, rasterDirty,
-            cancellation]() mutable {
+            cancellation, uniformVectorGlyphSize]() mutable {
             return refreshCachedSlice(dataset, request, std::move(displayPlane),
                 *contourPlane, std::move(vectors), rangeMode, userRange,
                 scale, palette, displayMode, vectorUField, vectorVField,
-                contourCount, rasterDirty, cancellation);
+                contourCount, rasterDirty, cancellation,
+                uniformVectorGlyphSize);
         });
     } else {
         future = QtConcurrent::run(
             [dataset, request, rangeMode, userRange, scale, palette,
                 cancellation, displayMode, vectorUField, vectorVField,
-                contourCount]() mutable {
+                contourCount, uniformVectorGlyphSize]() mutable {
             // The pipeline owns the whole non-cached slice worker, including
             // the cache-pressure level fallback (see
             // cache-budget-exceeded-hard-fails-after-load).
             return executeSliceWithFallback(dataset, request, rangeMode,
                 userRange, scale, palette, displayMode, vectorUField,
-                vectorVField, contourCount, cancellation);
+                vectorVField, contourCount, cancellation,
+                uniformVectorGlyphSize);
         });
     }
 
@@ -1275,6 +1280,7 @@ void MainWindow::showSlice(PlaneViewState& state, SliceDisplayResult display,
     state.cachedMode = display.mode;
     state.cachedVectorUField = display.vectorUField;
     state.cachedVectorVField = display.vectorVField;
+    state.cachedUniformVectorGlyphSize = display.uniformVectorGlyphSize;
     state.cachedContourCount = display.contourCount;
     if (m_activeView == &state) {
         // Tracks the active view; if log was requested but fell back to linear,
@@ -2074,6 +2080,7 @@ FrameSliceSpec MainWindow::buildFrameSpec()
     spec.displayMode = m_displayMode;
     spec.palette = m_paletteController->palette();
     spec.contourCount = m_contourCount;
+    spec.uniformVectorGlyphSize = m_uniformVectorGlyphSize;
     spec.sphericalSupersample = m_sphericalSupersample;
     spec.sphericalDisplay = m_sphericalDisplay;
     {

@@ -328,7 +328,7 @@ SliceDisplayResult executeSlice(const std::shared_ptr<DatasetSession>& dataset,
 
 void appendVectorGlyphs(const std::shared_ptr<DatasetSession>& dataset,
     SliceRequest request, FieldId uField, FieldId vField, int count,
-    StopToken cancellation, SliceDisplayResult& result)
+    StopToken cancellation, SliceDisplayResult& result, bool uniformSize)
 {
     // The primary scalar request already carries the optional box list.
     // Auxiliary vector-component planes contribute values only.
@@ -345,8 +345,8 @@ void appendVectorGlyphs(const std::shared_ptr<DatasetSession>& dataset,
         && request.sphericalDisplay == SphericalDisplay::RZ;
     result.vectors = sphericalRZ
         ? generateSphericalRZVectorGlyphs(
-              uSlice.plane, vSlice.plane, count, result.displayRegion)
-        : generateVectorGlyphs(uSlice.plane, vSlice.plane, count);
+              uSlice.plane, vSlice.plane, count, result.displayRegion, uniformSize)
+        : generateVectorGlyphs(uSlice.plane, vSlice.plane, count, uniformSize);
     result.slice.metrics.candidateBlocks += uSlice.metrics.candidateBlocks
         + vSlice.metrics.candidateBlocks;
     result.slice.metrics.blocksRead += uSlice.metrics.blocksRead
@@ -363,11 +363,12 @@ SliceDisplayResult executeSliceWithFallback(
     const std::optional<std::pair<double, double>>& userRange,
     bool logarithmic, const Palette& palette, DisplayMode displayMode,
     std::uint32_t vectorUField, std::uint32_t vectorVField, int contourCount,
-    StopToken cancellation)
+    StopToken cancellation, bool uniformVectorGlyphSize)
 {
     return executeSliceWithFallback(dataset, std::move(request), rangeMode,
         userRange, {logarithmic ? ColorScale::Logarithmic : ColorScale::Linear, 1.0},
-        palette, displayMode, vectorUField, vectorVField, contourCount, cancellation);
+        palette, displayMode, vectorUField, vectorVField, contourCount, cancellation,
+        uniformVectorGlyphSize);
 }
 
 SliceDisplayResult executeSliceWithFallback(
@@ -375,7 +376,7 @@ SliceDisplayResult executeSliceWithFallback(
     RangeMode rangeMode, const std::optional<std::pair<double, double>>& userRange,
     ColorScaleConfig scale, const Palette& palette, DisplayMode displayMode,
     std::uint32_t vectorUField, std::uint32_t vectorVField, int contourCount,
-    StopToken cancellation)
+    StopToken cancellation, bool uniformVectorGlyphSize)
 {
     request.outputSize = frameBudgetBoundedOutputSize(
         request.outputSize, dataset->maximumResponseBytes());
@@ -388,6 +389,7 @@ SliceDisplayResult executeSliceWithFallback(
             result.mode = displayMode;
             result.vectorUField = vectorUField;
             result.vectorVField = vectorVField;
+            result.uniformVectorGlyphSize = uniformVectorGlyphSize;
             result.contourCount = contourCount;
             if (isContourMode(displayMode)) {
                 appendContours(dataset, request, contourCount,
@@ -397,7 +399,8 @@ SliceDisplayResult executeSliceWithFallback(
             if (displayMode == DisplayMode::VelocityVectors) {
                 appendVectorGlyphs(dataset, request,
                     FieldId{vectorUField}, FieldId{vectorVField},
-                    contourCount, cancellation, result);
+                    contourCount, cancellation, result,
+                    uniformVectorGlyphSize);
             }
             result.cacheFallbackFromLevel = fallbackFrom;
             result.cacheFallbackToLevel = fallbackTo;
@@ -499,12 +502,14 @@ SliceDisplayResult refreshCachedSlice(
     const std::optional<std::pair<double, double>>& userRange,
     bool logarithmic, const Palette& palette, DisplayMode displayMode,
     std::uint32_t vectorUField, std::uint32_t vectorVField,
-    int contourCount, bool rasterDirty, StopToken cancellation)
+    int contourCount, bool rasterDirty, StopToken cancellation,
+    bool uniformVectorGlyphSize)
 {
     return refreshCachedSlice(dataset, request, std::move(displayPlanePtr),
         std::move(contourPlane), std::move(vectors), rangeMode, userRange,
         {logarithmic ? ColorScale::Logarithmic : ColorScale::Linear, 1.0}, palette,
-        displayMode, vectorUField, vectorVField, contourCount, rasterDirty, cancellation);
+        displayMode, vectorUField, vectorVField, contourCount, rasterDirty,
+        cancellation, uniformVectorGlyphSize);
 }
 
 SliceDisplayResult refreshCachedSlice(
@@ -514,7 +519,8 @@ SliceDisplayResult refreshCachedSlice(
     RangeMode rangeMode, const std::optional<std::pair<double, double>>& userRange,
     ColorScaleConfig scale, const Palette& palette, DisplayMode displayMode,
     std::uint32_t vectorUField, std::uint32_t vectorVField,
-    int contourCount, bool rasterDirty, StopToken cancellation)
+    int contourCount, bool rasterDirty, StopToken cancellation,
+    bool uniformVectorGlyphSize)
 {
     // The cache path exists to reuse an existing display plane; a null one is a
     // caller bug. Reject it here so displayPlane() never silently substitutes an
@@ -528,6 +534,7 @@ SliceDisplayResult refreshCachedSlice(
     result.mode = displayMode;
     result.vectorUField = vectorUField;
     result.vectorVField = vectorVField;
+    result.uniformVectorGlyphSize = uniformVectorGlyphSize;
     result.contourCount = contourCount;
     // Adopt the cached plane by shared_ptr instead of deep-copying it into
     // slice.plane (up to ~110 MB); every reader goes through displayPlane().
@@ -755,6 +762,7 @@ InitialSliceResult executeSessionFrameLoad(
                 auto display = executeSlice(result.dataset, request, rangeMode,
                     spec.userRange, frameScale, spec.palette, cancellation);
                 display.mode = spec.displayMode;
+                display.uniformVectorGlyphSize = spec.uniformVectorGlyphSize;
                 display.contourCount = spec.contourCount;
                 if (isContourMode(spec.displayMode)) {
                     appendContours(result.dataset, request, spec.contourCount,
@@ -777,7 +785,8 @@ InitialSliceResult executeSessionFrameLoad(
                     display.vectorVField = f2;
                     appendVectorGlyphs(result.dataset, request,
                         FieldId{f1}, FieldId{f2},
-                        spec.contourCount, cancellation, display);
+                        spec.contourCount, cancellation, display,
+                        spec.uniformVectorGlyphSize);
                 }
                 result.displays.push_back(std::move(display));
             }

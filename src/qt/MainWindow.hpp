@@ -543,6 +543,7 @@ private:
         DisplayMode cachedMode = DisplayMode::Raster;
         std::uint32_t cachedVectorUField = 0;
         std::uint32_t cachedVectorVField = 0;
+        bool cachedUniformVectorGlyphSize = false;
         int cachedContourCount = 0;
         StopSource stopSource;
         // The session epoch `plane` was produced under. A reload replaces the
@@ -725,7 +726,7 @@ private:
     void updateParticleOverlay(PlaneViewState& state);
     void updateParticleOverlays();
     void applyContourSettings(DisplayMode mode, int count, int uField, int vField,
-        int wField, int contourColor);
+        int wField, int contourColor, bool uniformVectorGlyphSize);
     void showNumberFormatDialog();
     void applyNumberFormat(const QString& format);
     void validateVectorMode();
@@ -1177,6 +1178,7 @@ private:
     StopSource m_metadataStopSource;
     DisplayMode m_displayMode = DisplayMode::Raster;
     int m_contourCount = 15;
+    bool m_uniformVectorGlyphSize = false;
     // 2-D spherical warp supersample factor (see SliceRequest::sphericalSupersample).
     int m_sphericalSupersample = 4;
     // 2-D spherical display layout (see SliceRequest::sphericalDisplay).

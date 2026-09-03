@@ -571,6 +571,9 @@ For contours, choose the number of lines and their color. For vectors, select
 the U and V components for 2-D data, and the U, V, and W components for 3-D
 data. AMReXplorer may propose fields based on common velocity names; verify the
 component selections for your dataset.
+Enable **Uniform glyph size (direction only)** to normalize each nonzero vector
+independently. In this mode every glyph has the same length and represents only
+the field direction; zero vectors remain hidden because they have no direction.
 
 ## Particles
 

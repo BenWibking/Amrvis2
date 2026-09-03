@@ -1810,11 +1810,12 @@ void MainWindow::showContoursDialog()
     dialog->setMode(m_displayMode);
     dialog->setContourCount(m_contourCount);
     dialog->setVectorFields(m_vectorUField, m_vectorVField, m_vectorWField);
+    dialog->setUniformVectorGlyphSize(m_uniformVectorGlyphSize);
     dialog->setContourColor(m_contourColor);
     connect(dialog, &SetContoursDialog::applied, this, [this, dialog] {
         applyContourSettings(dialog->mode(), dialog->contourCount(),
             dialog->uField(), dialog->vField(), dialog->wField(),
-            dialog->contourColor());
+            dialog->contourColor(), dialog->uniformVectorGlyphSize());
     });
     connect(dialog, &QDialog::finished, this, [this] {
         m_contoursDialog = nullptr;
@@ -1825,19 +1826,21 @@ void MainWindow::showContoursDialog()
 
 void MainWindow::applyContourSettings(
     DisplayMode mode, int count, int uField, int vField, int wField,
-    int contourColor)
+    int contourColor, bool uniformVectorGlyphSize)
 {
     const auto previousMode = m_displayMode;
     const auto previousCount = m_contourCount;
     const auto previousUField = m_vectorUField;
     const auto previousVField = m_vectorVField;
     const auto previousWField = m_vectorWField;
+    const auto previousUniformVectorGlyphSize = m_uniformVectorGlyphSize;
     m_displayMode = mode;
     m_contourCount = count;
     m_vectorUField = uField;
     m_vectorVField = vField;
     m_vectorWField = wField;
     m_contourColor = contourColor;
+    m_uniformVectorGlyphSize = uniformVectorGlyphSize;
     if (mode == DisplayMode::VelocityVectors) {
         ensureVectorFieldDefaults();
     }
@@ -1848,7 +1851,8 @@ void MainWindow::applyContourSettings(
         || previousMode == DisplayMode::VelocityVectors;
     const auto inputsChanged = mode != previousMode || count != previousCount
         || uField != previousUField || vField != previousVField
-        || wField != previousWField;
+        || wField != previousWField
+        || uniformVectorGlyphSize != previousUniformVectorGlyphSize;
     if (inputsChanged) {
         if (involvesVectors) {
             for (auto* state : currentViews()) {

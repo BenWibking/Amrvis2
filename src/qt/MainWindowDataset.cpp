@@ -1130,6 +1130,7 @@ void MainWindow::requestInitialSlice(
         spec.vectorWField =
             static_cast<std::uint32_t>(std::max(m_vectorWField, 0));
         spec.contourCount = m_contourCount;
+        spec.uniformVectorGlyphSize = m_uniformVectorGlyphSize;
         spec.sphericalSupersample = m_sphericalSupersample;
         spec.sphericalDisplay = m_sphericalDisplay;
     }

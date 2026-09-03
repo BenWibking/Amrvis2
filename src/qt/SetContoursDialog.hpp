@@ -10,6 +10,7 @@
 #include <vector>
 
 class QButtonGroup;
+class QCheckBox;
 class QComboBox;
 class QGroupBox;
 class QSpinBox;
@@ -41,12 +42,14 @@ public:
     void setMode(DisplayMode mode);
     void setContourCount(int count);
     void setVectorFields(int uField, int vField, int wField);
+    void setUniformVectorGlyphSize(bool uniform);
     void setContourColor(int color);
     [[nodiscard]] DisplayMode mode() const;
     [[nodiscard]] int contourCount() const;
     [[nodiscard]] int uField() const;
     [[nodiscard]] int vField() const;
     [[nodiscard]] int wField() const;
+    [[nodiscard]] bool uniformVectorGlyphSize() const;
     [[nodiscard]] int contourColor() const;
 
 signals:
@@ -60,6 +63,7 @@ private:
     QComboBox* m_uField = nullptr;
     QComboBox* m_vField = nullptr;
     QComboBox* m_wField = nullptr;
+    QCheckBox* m_uniformVectorGlyphSize = nullptr;
     QComboBox* m_contourColorCombo = nullptr;
     QSpinBox* m_colorIndex = nullptr;
 };
