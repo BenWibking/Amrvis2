@@ -3,6 +3,7 @@
 #include <QAbstractButton>
 #include <QButtonGroup>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -141,6 +142,11 @@ SetContoursDialog::SetContoursDialog(const std::vector<std::string>& fieldNames,
         }
         vectorLayout->addRow(tr("W field:"), m_wField);
     }
+    m_unitVectors = new QCheckBox(tr("Unit vectors (direction only)"), m_vectorBox);
+    m_unitVectors->setObjectName(QStringLiteral("unitVectorsCheckBox"));
+    m_unitVectors->setToolTip(tr(
+        "Draw all nonzero vectors at equal length, showing only field direction."));
+    vectorLayout->addRow(m_unitVectors);
     auto* vectorWarning = new QLabel(
         tr("U and V fields must be different"), m_vectorBox);
     vectorWarning->setStyleSheet("QLabel { color: red; }");
@@ -187,6 +193,16 @@ SetContoursDialog::SetContoursDialog(const std::vector<std::string>& fieldNames,
     const auto [uField, vField, wField] = detectVectorFields(fieldNames);
     setMode(DisplayMode::Raster);
     setVectorFields(uField, vField, wField);
+}
+
+void SetContoursDialog::setUnitVectors(bool enabled)
+{
+    m_unitVectors->setChecked(enabled);
+}
+
+bool SetContoursDialog::unitVectors() const
+{
+    return m_unitVectors->isChecked();
 }
 
 void SetContoursDialog::setMode(DisplayMode mode)
