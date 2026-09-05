@@ -150,7 +150,7 @@ SetContoursDialog::SetContoursDialog(const std::vector<std::string>& fieldNames,
     m_unitVectors->setToolTip(tr(
         "Draw all nonzero vectors at equal length, showing only field direction."));
     vectorLayout->addRow(m_unitVectors);
-    auto* vectorWarning = new QLabel(
+    m_vectorWarning = new QLabel(
         tr("U and V fields must be different"), m_vectorBox);
     updateWarningColor();
     m_vectorWarning->setVisible(false);
