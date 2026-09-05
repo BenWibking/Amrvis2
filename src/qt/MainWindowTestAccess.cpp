@@ -364,6 +364,16 @@ void MainWindow::setGridBoxesVisibleForTest(bool visible)
     m_boxesAction->setChecked(visible);
 }
 
+void MainWindow::setScaleBarVisibleForTest(bool visible)
+{
+    m_scaleBarAction->setChecked(visible);
+}
+
+bool MainWindow::scaleBarActionEnabledForTest() const
+{
+    return m_scaleBarAction->isEnabled();
+}
+
 std::size_t MainWindow::activeViewGridBoxCountForTest() const
 {
     return m_activeView == nullptr
@@ -803,6 +813,11 @@ QImage MainWindow::activeViewViewportImageForTest() const
     return m_activeView->view->viewport()->grab().toImage();
 }
 
+bool MainWindow::activeViewHasScaleBarForTest() const
+{
+    return m_activeView != nullptr && m_activeView->view->hasScaleBar();
+}
+
 bool MainWindow::activeViewFitsWindowForTest() const
 {
     return m_activeView != nullptr && m_activeView->view->hasImage()
@@ -946,13 +961,12 @@ void MainWindow::openStandaloneFabForTest(const std::filesystem::path& path)
     m_fabNavigator->openStandaloneFab(path);
 }
 
-void MainWindow::startAnimationExportForTest(const QString& path,
-    bool includeColorBar)
-{
+void MainWindow::startAnimationExportForTest(const QString& path, bool includeColorBar,
+                                             bool includeAxes, bool transparentBackground) {
     if (m_animationExporter->active()) {
         return;
     }
-    beginAnimationExport(path, includeColorBar);
+    beginAnimationExport(path, exportOptions(includeColorBar, includeAxes, transparentBackground));
 }
 
 int MainWindow::backgroundErrorCountForTest() const
