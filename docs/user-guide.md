@@ -47,6 +47,11 @@ true physical space — see [2-D spherical coordinates](#2-d-spherical-coordinat
 
 ## Remote datasets
 
+For compute nodes managed by a scheduler, see
+[Remote visualization on a Slurm cluster](slurm-remote.md), including an OLCF
+Riker example, a launcher that discovers your allocation automatically, and
+optional cache sizing from the job's memory limit.
+
 AMReXplorer can display plotfiles that live on another Linux machine, such as
 an HPC login node. The client runs `amrexplorer-server` on the remote machine
 through `ssh` and speaks its protocol over that ssh connection's own
