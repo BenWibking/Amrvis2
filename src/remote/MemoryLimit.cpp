@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <locale>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -178,8 +180,19 @@ std::optional<MemoryLimit> detectMemoryLimit()
     MemoryLimitInputs inputs;
     inputs.readFile = readFile;
     inputs.environment = [](const std::string& name) -> std::optional<std::string> {
+#ifdef _MSC_VER
+        char* value = nullptr;
+        std::size_t size = 0;
+        const auto error = _dupenv_s(&value, &size, name.c_str());
+        const std::unique_ptr<char, decltype(&std::free)> ownedValue(value, &std::free);
+        if (error != 0 || !ownedValue) {
+            return std::nullopt;
+        }
+        return std::string(ownedValue.get());
+#else
         const auto* value = std::getenv(name.c_str());
         return value ? std::optional<std::string>(value) : std::nullopt;
+#endif
     };
 #ifdef __linux__
     inputs.cgroupMembership = readFile("/proc/self/cgroup").value_or("");
@@ -197,9 +210,15 @@ std::optional<MemoryLimit> detectMemoryLimit()
 double parseCacheMemoryFraction(const std::string& text)
 {
     double value = 0;
-    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
-    if (error != std::errc{} || end != text.data() + text.size() || !std::isfinite(value) ||
-        value <= 0 || value > 1) {
+    // Older Apple libc++ versions lack floating-point from_chars. Keep parsing
+    // locale-independent and reject whitespace, hex, leading '+', and trailing text.
+    std::istringstream input(text);
+    input.imbue(std::locale::classic());
+    input >> std::noskipws >> value;
+    if (text.empty() || text.front() == '+' ||
+        text.find_first_not_of("0123456789.eE+-") != std::string::npos ||
+        input.fail() || !input.eof() ||
+        !std::isfinite(value) || value <= 0 || value > 1) {
         throw std::invalid_argument("--cache-memory-fraction must be greater than 0 and at most 1");
     }
     return value;

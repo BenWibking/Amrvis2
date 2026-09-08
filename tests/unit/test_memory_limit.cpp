@@ -3,10 +3,16 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <locale>
 #include <map>
 #include <stdexcept>
 
 namespace {
+class CommaDecimalPoint : public std::numpunct<char> {
+protected:
+    char do_decimal_point() const override { return ','; }
+};
+
 void require(bool condition, const char* message)
 {
     if (!condition) {
@@ -70,17 +76,28 @@ int main()
     inputs.physicalBytes.reset();
     env.clear();
     require(!detectMemoryLimit(inputs), "unavailable detection");
-    for (const auto* invalid : {"", "0", "-0.5", "1.01", "nan", "inf", "0.5junk"}) {
+    const auto previousLocale =
+        std::locale::global(std::locale(std::locale::classic(), new CommaDecimalPoint));
+    for (const auto* invalid : {"", "0", "-0.5", "1.01", "nan", "inf", "0.5junk",
+                                " 0.5", "0.5 ", "\t0.5", "0.5\n", "+0.5", "0,5",
+                                "0x1p-1", "1e", "1e9999", "1e-9999"}) {
         bool rejected = false;
         try {
             static_cast<void>(parseCacheMemoryFraction(invalid));
         } catch (const std::invalid_argument&) {
             rejected = true;
         }
+        if (!rejected) {
+            std::cerr << "Invalid fraction: '" << invalid << "'\n";
+        }
         require(rejected, "invalid fraction accepted");
     }
     require(cacheBytesForFraction(1024, parseCacheMemoryFraction("0.5")) == 512,
             "fraction scaling");
+    require(parseCacheMemoryFraction("5e-1") == 0.5, "scientific notation fraction");
+    require(parseCacheMemoryFraction(".5") == 0.5, "fraction without leading zero");
+    require(parseCacheMemoryFraction("1") == 1, "full fraction");
+    std::locale::global(previousLocale);
     require(cacheBytesForFraction(std::numeric_limits<std::uint64_t>::max(), 1) ==
                 std::numeric_limits<std::uint64_t>::max(),
             "full uint64 budget");
