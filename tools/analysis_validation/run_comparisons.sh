@@ -63,7 +63,7 @@ if have_kangaroo; then
         read -r -a options <<< "$args"
         "$python" "$examples/plotfile_slice.py" "$work/plt_part" "${options[@]}" \
             --no-plot --npz "$work/slice_ax.npz"
-        (cd "$kangaroo" && "$kangaroo_python" "$here/kangaroo_slice_array.py" \
+        (cd "$kangaroo" && PYTHONPATH="$kangaroo" "$kangaroo_python" "$here/kangaroo_slice_array.py" \
             "$work/plt_part" "$work/slice_k.npz" "${options[@]}" > /dev/null 2>&1)
         status=0
         "$python" - "$work/slice_ax.npz" "$work/slice_k.npz" <<'EOF2' || status=1
@@ -107,7 +107,7 @@ EOF
         # index is right on every level).
         "$python" "$examples/plotfile_slice.py" "$QUOKKA_PLOTFILE" --var gasDensity \
             --coord=1e10 --no-plot --npz "$work/q_slice_ax.npz"
-        (cd "$kangaroo" && "$kangaroo_python" "$here/kangaroo_slice_array.py" \
+        (cd "$kangaroo" && PYTHONPATH="$kangaroo" "$kangaroo_python" "$here/kangaroo_slice_array.py" \
             "$QUOKKA_PLOTFILE" "$work/q_slice_k.npz" --var gasDensity --coord=1e10 \
             > /dev/null 2>&1)
         status=0
