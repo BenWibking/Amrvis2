@@ -19,6 +19,11 @@ dependencies = ["numpy>=1.22"]
 examples = ["matplotlib", "numba"]
 test = ["pytest", "matplotlib"]
 
+# uv installs the dev group by default (`uv sync`, `uv run`), so the examples'
+# dependencies stay in the project venv.
+[dependency-groups]
+dev = ["amrexplorer[examples]"]
+
 [tool.scikit-build]
 minimum-version = "build-system.requires"
 build-dir = "build-pip/{wheel_tag}"
