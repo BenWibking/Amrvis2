@@ -16,7 +16,7 @@ license = { file = "LICENSE" }
 dependencies = ["numpy>=1.22"]
 
 [project.optional-dependencies]
-examples = ["matplotlib"]
+examples = ["matplotlib", "numba"]
 test = ["pytest", "matplotlib"]
 
 [tool.scikit-build]
