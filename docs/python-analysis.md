@@ -13,10 +13,28 @@ of a solar mass itself.
 
 ## Installing
 
-From a checkout, with a C++20 compiler and CMake 3.25 or newer:
+From a checkout, with a C++20 compiler, CMake 3.25 or newer, and Python
+3.9 or newer with its development headers (`Python.h` and `patchlevel.h`):
 
 ```sh
 python -m pip install .
+```
+
+If CMake reports a missing `patchlevel.h` or `Development.Module`, the Python
+installation may lack its development headers. A virtual environment uses the
+base interpreter's headers, so recreating it with the same Python will not
+fix missing headers. Install the matching Python development package (for
+example, `python3-devel` on RHEL), or use a Python installation that includes
+the headers. On an HPC system with a Miniforge module, create a new virtual
+environment from that Python:
+
+```sh
+deactivate  # if a virtual environment is active
+module load miniforge3
+python3 -m venv .venv-python
+source .venv-python/bin/activate
+python -m pip install .
+python -c "import amrexplorer; print(amrexplorer.__file__)"
 ```
 
 This builds only the analysis extension (no Qt, no remote protocol). For
